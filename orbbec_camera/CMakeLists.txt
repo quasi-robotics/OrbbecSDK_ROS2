@@ -19,6 +19,8 @@ if ("$ENV{ROS_DISTRO}" STREQUAL "jazzy")
   add_compile_definitions(ROS_JAZZY)
 elseif ("$ENV{ROS_DISTRO}" STREQUAL "iron")
   add_compile_definitions(ROS_IRON)
+elseif ("$ENV{ROS_DISTRO}" STREQUAL "kilted")
+  add_compile_definitions(ROS_KILTED)
 endif ()
 
 # find dependencies

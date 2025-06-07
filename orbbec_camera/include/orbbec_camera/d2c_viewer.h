@@ -14,10 +14,17 @@
 * limitations under the License.
 *******************************************************************************/
 #pragma once
+#if defined(ROS_KILTED)
+#include <message_filters/subscriber.hpp>
+#include <message_filters/sync_policies/approximate_time.hpp>
+#include <message_filters/synchronizer.hpp>
+#include <message_filters/time_synchronizer.hpp>
+#else
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <message_filters/synchronizer.h>
 #include <message_filters/time_synchronizer.h>
+#endif
 #include <sensor_msgs/msg/image.hpp>
 #include <rclcpp/rclcpp.hpp>
 

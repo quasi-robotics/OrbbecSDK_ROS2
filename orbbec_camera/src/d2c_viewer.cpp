@@ -14,7 +14,7 @@
  * limitations under the License.
  *******************************************************************************/
 
-#if defined(ROS_JAZZY) || defined(ROS_IRON)
+#if defined(ROS_JAZZY) || defined(ROS_IRON) || defined(ROS_KILTED)
 #include <cv_bridge/cv_bridge.hpp>
 #else
 #include <cv_bridge/cv_bridge.h>
