@@ -206,6 +206,11 @@ void OBCameraNode::setupCameraCtrlServices() {
                                   std::shared_ptr<SetBool::Response> response) {
         setSYNCHostimeCallback(request, response);
       });
+  send_software_trigger_srv_ = node_->create_service<SetBool>(
+      "send_software_trigger", [this](const std::shared_ptr<SetBool::Request> request,
+                                      std::shared_ptr<SetBool::Response> response) {
+        sendSoftwareTriggerCallback(request, response);
+      });
   set_write_customerdata_srv_ = node_->create_service<SetString>(
       "set_write_customer_data", [this](const std::shared_ptr<SetString::Request> request,
                                         std::shared_ptr<SetString::Response> response) {
@@ -1045,6 +1050,26 @@ void OBCameraNode::setSYNCHostimeCallback(
   (void)request;
   try {
     device_->timerSyncWithHost();
+    response->success = true;
+  } catch (const ob::Error& e) {
+    response->message = e.getMessage();
+    response->success = false;
+  } catch (const std::exception& e) {
+    response->message = e.what();
+    response->success = false;
+  } catch (...) {
+    response->message = "unknown error";
+    response->success = false;
+  }
+}
+
+void OBCameraNode::sendSoftwareTriggerCallback(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request>& request,
+    std::shared_ptr<std_srvs::srv::SetBool::Response>& response) {
+  try {
+    if (request->data) {
+      device_->triggerCapture();
+    }
     response->success = true;
   } catch (const ob::Error& e) {
     response->message = e.getMessage();

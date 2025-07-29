@@ -326,3 +326,9 @@ ros2 service call /camera/set_sync_interleaverlaser orbbec_camera_msgs/srv/SetIn
 ```
 ros2 service call /camera/set_sync_hosttime std_srvs/srv/SetBool '{data: true}'
 ```
+
+* `/camera/send_software_trigger`
+
+```
+ros2 service call /camera/send_software_trigger std_srvs/srv/SetBool '{data: true}'
+```

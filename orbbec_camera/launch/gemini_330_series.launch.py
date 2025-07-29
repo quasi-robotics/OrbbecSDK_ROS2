@@ -162,7 +162,7 @@ def generate_launch_description():
         # Network device settings: default enumerate_net_device is set to true, which will automatically enumerate network devices
         # If you do not want to automatically enumerate network devices,
         # you can set enumerate_net_device to true, net_device_ip to the device's IP address, and net_device_port to the default value of 8090
-        DeclareLaunchArgument('enumerate_net_device', default_value='false'),
+        DeclareLaunchArgument('enumerate_net_device', default_value='true'),
         DeclareLaunchArgument('net_device_ip', default_value=''),
         DeclareLaunchArgument('net_device_port', default_value='0'),
         DeclareLaunchArgument('exposure_range_mode', default_value='default'),#default, ultimate or regular
@@ -178,6 +178,7 @@ def generate_launch_description():
         DeclareLaunchArgument('trigger2image_delay_us', default_value='0'),
         DeclareLaunchArgument('trigger_out_delay_us', default_value='0'),
         DeclareLaunchArgument('trigger_out_enabled', default_value='true'),
+        DeclareLaunchArgument('software_trigger_enabled', default_value='true'),
         DeclareLaunchArgument('frames_per_trigger', default_value='2'),
         DeclareLaunchArgument('software_trigger_period', default_value='33'),  # ms
         DeclareLaunchArgument('enable_ptp_config', default_value='false'),#Only for Gemini 335Le

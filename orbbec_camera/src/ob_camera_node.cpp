@@ -199,7 +199,7 @@ void OBCameraNode::setupDevices() {
                          "Laser energy level set to " << new_laser_energy_level << " (new value)");
     }
   }
-  if (depth_registration_) {
+  if (depth_registration_ && align_mode_ == "SW") {
     RCLCPP_INFO_STREAM(logger_, "Create align filter");
     align_filter_ = std::make_unique<ob::Align>(align_target_stream_);
   }
@@ -299,8 +299,11 @@ void OBCameraNode::setupDevices() {
       RCLCPP_INFO_STREAM(logger_, "Frames per trigger: " << sync_config.framesPerTrigger);
       RCLCPP_INFO_STREAM(logger_,
                          "Software trigger period " << software_trigger_period_.count() << " ms");
-      software_trigger_timer_ = node_->create_wall_timer(
-          software_trigger_period_, [this]() { TRY_EXECUTE_BLOCK(device_->triggerCapture()); });
+      software_trigger_timer_ = node_->create_wall_timer(software_trigger_period_, [this]() {
+        if (software_trigger_enabled_) {
+          TRY_EXECUTE_BLOCK(device_->triggerCapture());
+        }
+      });
     }
   }
   if (device_->isPropertySupported(OB_DEVICE_PTP_CLOCK_SYNC_ENABLE_BOOL,
@@ -740,7 +743,7 @@ void OBCameraNode::setupColorPostProcessFilter() {
   color_filter_list_ = color_sensor->createRecommendedFilters();
   if (color_filter_list_.empty()) {
     RCLCPP_WARN_STREAM(logger_, "Failed to get color sensor filter list");
-    return;
+    //   return;
   }
   for (size_t i = 0; i < color_filter_list_.size(); i++) {
     auto filter = color_filter_list_[i];
@@ -756,6 +759,28 @@ void OBCameraNode::setupColorPostProcessFilter() {
     }
     if (filter_name == "DecimationFilter" && enable_color_decimation_filter_) {
       auto decimation_filter = filter->as<ob::DecimationFilter>();
+      auto range = decimation_filter->getScaleRange();
+      if (color_decimation_filter_scale_ != -1 && color_decimation_filter_scale_ <= range.max &&
+          color_decimation_filter_scale_ >= range.min) {
+        RCLCPP_INFO_STREAM(logger_, "Set color decimation filter scale value to "
+                                        << color_decimation_filter_scale_);
+        decimation_filter->setScaleValue(color_decimation_filter_scale_);
+      }
+      if (color_decimation_filter_scale_ != -1 && (color_decimation_filter_scale_ < range.min ||
+                                                   color_decimation_filter_scale_ > range.max)) {
+        RCLCPP_ERROR_STREAM(logger_, "Color Decimation filter scale value is out of range "
+                                         << range.min << " - " << range.max);
+      }
+    }
+  }
+  auto device_info = device_->getDeviceInfo();
+  CHECK_NOTNULL(device_info);
+  auto pid = device_info->getPid();
+  if (pid == GEMINI2_PID || pid == GEMINI2L_PID) {
+    if (enable_color_decimation_filter_) {
+      auto decimation_filter = std::make_shared<ob::DecimationFilter>();
+      decimation_filter->enable(true);
+      color_filter_list_.push_back(decimation_filter);
       auto range = decimation_filter->getScaleRange();
       if (color_decimation_filter_scale_ != -1 && color_decimation_filter_scale_ <= range.max &&
           color_decimation_filter_scale_ >= range.min) {
@@ -1630,7 +1655,8 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<int>(color_delay_us_, "color_delay_us", 0);
   setAndGetNodeParameter<int>(trigger2image_delay_us_, "trigger2image_delay_us", 0);
   setAndGetNodeParameter<int>(trigger_out_delay_us_, "trigger_out_delay_us", 0);
-  setAndGetNodeParameter<bool>(trigger_out_enabled_, "trigger_out_enabled", false);
+  setAndGetNodeParameter<bool>(trigger_out_enabled_, "trigger_out_enabled", true);
+  setAndGetNodeParameter<bool>(software_trigger_enabled_, "software_trigger_enabled", true);
   setAndGetNodeParameter<bool>(enable_ptp_config_, "enable_ptp_config", false);
   setAndGetNodeParameter<std::string>(cloud_frame_id_, "cloud_frame_id", "");
   if (enable_colored_point_cloud_ || enable_d2c_viewer_) {
@@ -2765,24 +2791,17 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
   auto pid = device_info->getPid();
   OBCameraIntrinsic intrinsic;
   OBCameraDistortion distortion;
-  if (isGemini335PID(pid)) {
-    auto stream_profile = frame->getStreamProfile();
-    CHECK_NOTNULL(stream_profile);
-    auto video_stream_profile = stream_profile->as<ob::VideoStreamProfile>();
-    CHECK_NOTNULL(video_stream_profile);
-    intrinsic = video_stream_profile->getIntrinsic();
-    distortion = video_stream_profile->getDistortion();
-  } else {
+  auto stream_profile = frame->getStreamProfile();
+  CHECK_NOTNULL(stream_profile);
+  auto video_stream_profile = stream_profile->as<ob::VideoStreamProfile>();
+  CHECK_NOTNULL(video_stream_profile);
+  intrinsic = video_stream_profile->getIntrinsic();
+  distortion = video_stream_profile->getDistortion();
+  if (pid == DABAI_MAX_PID) {
     auto camera_params = pipeline_->getCameraParam();
-    intrinsic = stream_index.first == OB_STREAM_COLOR ? camera_params.rgbIntrinsic
-                                                      : camera_params.depthIntrinsic;
-    distortion = stream_index.first == OB_STREAM_COLOR ? camera_params.rgbDistortion
-                                                       : camera_params.depthDistortion;
-    if (pid == DABAI_MAX_PID) {
-      // use color param
-      intrinsic = camera_params.rgbIntrinsic;
-      distortion = camera_params.rgbDistortion;
-    }
+    // use color param
+    intrinsic = camera_params.rgbIntrinsic;
+    distortion = camera_params.rgbDistortion;
   }
   std::string frame_id = optical_frame_id_[stream_index];
   if (depth_registration_ && stream_index == DEPTH) {
