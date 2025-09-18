@@ -235,6 +235,18 @@ ros2 service call /camera/set_ldp_enable std_srvs/srv/SetBool '{data: true}'
 ros2 service call /camera/get_ldp_status orbbec_camera_msgs/srv/GetBool '{}'
 ```
 
+* `/camera/set_ptp_config`
+
+```bash
+`ptp_config`ros2 service call /camera/set_ptp_config std_srvs/srv/SetBool '{data: true}'
+```
+
+* `/camera/get_ptp_config`
+
+```bash
+ros2 service call /camera/get_ptp_config` orbbec_camera_msgs/srv/GetBool '{}'
+```
+
 * `/camera/get_lrm_measure_distance`
 
 ```bash
@@ -299,6 +311,14 @@ ros2 service call /camera/set_filter  orbbec_camera_msgs/srv/SetFilter '{filter_
 
 #set HardwareNoiseRemoval
 ros2 service call /camera/set_filter  orbbec_camera_msgs/srv/SetFilter '{filter_name: HardwareNoiseRemoval,filter_enable: true,filter_param: []}'
+
+# Set SpatialFastFilter
+# filter_param: [radius]
+ros2 service call /camera/set_filter orbbec_camera_msgs/srv/SetFilter '{filter_name: SpatialFastFilter, filter_enable: true, filter_param: [4]}'
+
+# Set SpatialModerateFilter
+# filter_param: [disp_diff, magnitude, radius, ]
+ros2 service call /camera/set_filter orbbec_camera_msgs/srv/SetFilter '{filter_name: SpatialModerateFilter, filter_enable: true, filter_param: [160,1,3]}'
 ```
 
 * `/camera/set_floor_enable`

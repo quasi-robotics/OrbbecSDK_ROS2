@@ -114,7 +114,7 @@ def generate_launch_description():
         DeclareLaunchArgument('depth_ae_roi_right', default_value='-1'),
         DeclareLaunchArgument('depth_ae_roi_top', default_value='-1'),
         DeclareLaunchArgument('depth_ae_roi_bottom', default_value='-1'),
-        DeclareLaunchArgument('depth_brightness', default_value='-1'),
+        DeclareLaunchArgument('mean_intensity_set_point', default_value='-1'),
         DeclareLaunchArgument('left_ir_width', default_value='0'),
         DeclareLaunchArgument('left_ir_height', default_value='0'),
         DeclareLaunchArgument('left_ir_fps', default_value='0'),
@@ -161,7 +161,7 @@ def generate_launch_description():
         DeclareLaunchArgument('color_info_url', default_value=''),
         # Network device settings: default enumerate_net_device is set to true, which will automatically enumerate network devices
         # If you do not want to automatically enumerate network devices,
-        # you can set enumerate_net_device to true, net_device_ip to the device's IP address, and net_device_port to the default value of 8090
+        # you can set enumerate_net_device to false, net_device_ip to the device's IP address, and net_device_port to the default value of 8090
         DeclareLaunchArgument('enumerate_net_device', default_value='true'),
         DeclareLaunchArgument('net_device_ip', default_value=''),
         DeclareLaunchArgument('net_device_port', default_value='0'),
@@ -195,6 +195,8 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_temporal_filter', default_value='false'),
         DeclareLaunchArgument('enable_disaparity_to_depth', default_value='true'),
         DeclareLaunchArgument('enable_hole_filling_filter', default_value='false'),
+        DeclareLaunchArgument('enable_spatial_fast_filter', default_value='false'),
+        DeclareLaunchArgument('enable_spatial_moderate_filter', default_value='false'),
         DeclareLaunchArgument('decimation_filter_scale', default_value='-1'),
         DeclareLaunchArgument('sequence_id_filter_id', default_value='-1'),
         DeclareLaunchArgument('threshold_filter_max', default_value='-1'),
@@ -213,6 +215,10 @@ def generate_launch_description():
         DeclareLaunchArgument('hdr_merge_gain_1', default_value='-1'),
         DeclareLaunchArgument('hdr_merge_exposure_2', default_value='-1'),
         DeclareLaunchArgument('hdr_merge_gain_2', default_value='-1'),
+        DeclareLaunchArgument('spatial_fast_filter_radius', default_value='-1'),
+        DeclareLaunchArgument('spatial_moderate_filter_diff_threshold', default_value='-1'),
+        DeclareLaunchArgument('spatial_moderate_filter_magnitude', default_value='-1'),
+        DeclareLaunchArgument('spatial_moderate_filter_radius', default_value='-1'),
         DeclareLaunchArgument('align_mode', default_value='SW'),
         DeclareLaunchArgument('align_target_stream', default_value='COLOR'),# COLOR or DEPTH
         DeclareLaunchArgument('diagnostic_period', default_value='1.0'),
@@ -260,6 +266,7 @@ def generate_launch_description():
         DeclareLaunchArgument('laser_index0_depth_gain', default_value='16'),
         DeclareLaunchArgument('laser_index0_ir_brightness', default_value='60'),
         DeclareLaunchArgument('laser_index0_ir_ae_max_exposure', default_value='30000'),
+        DeclareLaunchArgument('show_fps_enable', default_value='false'),
     ]
 
     def get_params(context, args):

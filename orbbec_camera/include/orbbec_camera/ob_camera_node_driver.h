@@ -87,6 +87,7 @@ class OBCameraNodeDriver : public rclcpp::Node {
   std::shared_ptr<ob::DeviceInfo> device_info_ = nullptr;
   std::atomic_bool is_alive_{false};
   std::atomic_bool device_connected_{false};
+  std::atomic_bool device_connecting_{false};
   std::string serial_number_;
   std::string device_unique_id_;
   std::string usb_port_;
@@ -118,5 +119,6 @@ class OBCameraNodeDriver : public rclcpp::Node {
   std::string extension_path_;
   static backward::SignalHandling sh;  // for stack trace
   std::string upgrade_firmware_;
+  std::atomic<bool> firmware_update_success_{false};
 };
 }  // namespace orbbec_camera

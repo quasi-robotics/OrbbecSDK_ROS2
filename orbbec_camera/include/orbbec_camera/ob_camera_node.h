@@ -63,6 +63,7 @@
 #include "orbbec_camera/d2c_viewer.h"
 #include "magic_enum/magic_enum.hpp"
 #include "orbbec_camera/image_publisher.h"
+#include "orbbec_camera/fps_counter.hpp"
 #include "jpeg_decoder.h"
 #include <std_msgs/msg/string.hpp>
 #include <fcntl.h>
@@ -156,6 +157,13 @@ class OBCameraNode {
   ~OBCameraNode() noexcept;
 
   void clean() noexcept;
+
+  // Safely expose the lock
+  template <typename Func>
+  auto withDeviceLock(Func &&func) -> decltype(func()) {
+    std::lock_guard<std::recursive_mutex> lock(device_lock_);
+    return func();
+  }
 
   void rebootDevice();
 
@@ -274,6 +282,10 @@ class OBCameraNode {
                             const std::shared_ptr<std_srvs::srv::SetBool::Request>& request,
                             std::shared_ptr<std_srvs::srv::SetBool::Response>& response);
 
+  void setPtpConfigCallback(const std::shared_ptr<rmw_request_id_t>& request_header,
+                            const std::shared_ptr<std_srvs::srv::SetBool::Request>& request,
+                            std::shared_ptr<std_srvs::srv::SetBool::Response>& response);
+
   void setFanWorkModeCallback(const std::shared_ptr<SetInt32::Request>& request,
                               std::shared_ptr<SetInt32::Response>& response);
 
@@ -301,7 +313,8 @@ class OBCameraNode {
 
   void getLdpStatusCallback(const std::shared_ptr<GetBool::Request>& request,
                             std::shared_ptr<GetBool::Response>& response);
-
+  void getPtpConfigCallback(const std::shared_ptr<GetBool::Request>& request,
+                            std::shared_ptr<GetBool::Response>& response);
   void getLrmMeasureDistanceCallback(const std::shared_ptr<GetInt32::Request>& request,
                                      std::shared_ptr<GetInt32::Response>& response);
 
@@ -488,6 +501,8 @@ class OBCameraNode {
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_laser_enable_srv_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_ldp_enable_srv_;
   rclcpp::Service<orbbec_camera_msgs::srv::GetBool>::SharedPtr get_ldp_status_srv_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_ptp_config_srv_;
+  rclcpp::Service<orbbec_camera_msgs::srv::GetBool>::SharedPtr get_ptp_config_srv_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_floor_enable_srv_;
   rclcpp::Service<SetInt32>::SharedPtr set_fan_work_mode_srv_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr toggle_sensors_srv_;
@@ -565,6 +580,7 @@ class OBCameraNode {
   int depth_ae_roi_top_ = -1;
   int depth_ae_roi_right_ = -1;
   int depth_ae_roi_bottom_ = -1;
+  int mean_intensity_set_point_ = -1;
   int depth_brightness_ = -1;
   int ir_exposure_ = -1;
   int ir_gain_ = -1;
@@ -609,7 +625,7 @@ class OBCameraNode {
   std::shared_ptr<JPEGDecoder> jpeg_decoder_ = nullptr;
   uint8_t* rgb_buffer_ = nullptr;
   bool is_color_frame_decoded_ = false;
-  std::mutex device_lock_;
+  std::recursive_mutex device_lock_;
   // For color
   std::queue<std::shared_ptr<ob::FrameSet>> color_frame_queue_;
   std::shared_ptr<std::thread> colorFrameThread_ = nullptr;
@@ -630,6 +646,8 @@ class OBCameraNode {
   bool enable_spatial_filter_ = true;
   bool enable_temporal_filter_ = false;
   bool enable_hole_filling_filter_ = false;
+  bool enable_spatial_fast_filter_ = false;
+  bool enable_spatial_moderate_filter_ = false;
   // filter params
   int decimation_filter_scale_ = -1;
   int sequence_id_filter_id_ = -1;
@@ -652,7 +670,10 @@ class OBCameraNode {
   int gmsl_trigger_fd_ = -1;
   int gmsl_trigger_fps_ = -1;
   bool enable_gmsl_trigger_ = false;
-
+  int spatial_fast_filter_radius_ = -1;
+  int spatial_moderate_filter_radius_ = -1;
+  int spatial_moderate_filter_diff_threshold_ = -1;
+  int spatial_moderate_filter_magnitude_ = -1;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr filter_status_pub_;
   nlohmann::json filter_status_;
   std::string align_mode_ = "HW";
@@ -734,5 +755,11 @@ class OBCameraNode {
   int offset_index1_ = -1;
 
   std::string frame_aggregate_mode_ = "ANY";  // # full_frame, color_frame, ANY or disable
+
+  bool show_fps_enable_ = false;
+  std::unique_ptr<FpsCounter> fps_counter_color_{nullptr};
+  std::unique_ptr<FpsCounter> fps_counter_depth_{nullptr};
+  std::unique_ptr<FpsCounter> fps_counter_left_ir_{nullptr};
+  std::unique_ptr<FpsCounter> fps_counter_right_ir_{nullptr};
 };
 }  // namespace orbbec_camera

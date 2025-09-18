@@ -113,7 +113,7 @@ def generate_launch_description():
         DeclareLaunchArgument('depth_ae_roi_right', default_value='-1'),
         DeclareLaunchArgument('depth_ae_roi_top', default_value='-1'),
         DeclareLaunchArgument('depth_ae_roi_bottom', default_value='-1'),
-        DeclareLaunchArgument('depth_brightness', default_value='-1'),
+        DeclareLaunchArgument('mean_intensity_set_point', default_value='-1'),
         DeclareLaunchArgument('left_ir_width', default_value='0'),
         DeclareLaunchArgument('left_ir_height', default_value='0'),
         DeclareLaunchArgument('left_ir_fps', default_value='0'),
@@ -160,7 +160,7 @@ def generate_launch_description():
         DeclareLaunchArgument('color_info_url', default_value=''),
         # Network device settings: default enumerate_net_device is set to true, which will automatically enumerate network devices
         # If you do not want to automatically enumerate network devices,
-        # you can set enumerate_net_device to true, net_device_ip to the device's IP address, and net_device_port to the default value of 8090
+        # you can set enumerate_net_device to false, net_device_ip to the device's IP address, and net_device_port to the default value of 8090
         DeclareLaunchArgument("enumerate_net_device", default_value='true'),
         DeclareLaunchArgument("net_device_ip", default_value=""),
         DeclareLaunchArgument("net_device_port", default_value="0"),
