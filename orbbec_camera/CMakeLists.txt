@@ -180,9 +180,9 @@ endmacro()
 # Define library and nodes
 add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})
 
-ament_target_dependencies(${PROJECT_NAME} ${dependencies})
 target_include_directories(${PROJECT_NAME} PUBLIC ${COMMON_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} ${COMMON_LIBRARIES})
+ament_target_dependencies(${PROJECT_NAME} ${dependencies})
 
 rclcpp_components_register_node(
     ${PROJECT_NAME} PLUGIN "orbbec_camera::OBCameraNodeDriver" EXECUTABLE orbbec_camera_node
