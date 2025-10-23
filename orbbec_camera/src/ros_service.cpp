@@ -224,16 +224,73 @@ void OBCameraNode::setupCameraCtrlServices() {
                                       std::shared_ptr<SetBool::Response> response) {
         sendSoftwareTriggerCallback(request, response);
       });
-  set_write_customerdata_srv_ = node_->create_service<SetString>(
-      "set_write_customer_data", [this](const std::shared_ptr<SetString::Request> request,
-                                        std::shared_ptr<SetString::Response> response) {
-        setWriteCustomerData(request, response);
+  write_customerdata_srv_ = node_->create_service<SetString>(
+      "write_customer_data", [this](const std::shared_ptr<SetString::Request> request,
+                                    std::shared_ptr<SetString::Response> response) {
+        writeCustomerDataCallback(request, response);
       });
-  set_read_customerdata_srv_ = node_->create_service<SetString>(
-      "set_read_customer_data", [this](const std::shared_ptr<SetString::Request> request,
-                                       std::shared_ptr<SetString::Response> response) {
-        setReadCustomerData(request, response);
+  read_customerdata_srv_ = node_->create_service<GetString>(
+      "read_customer_data", [this](const std::shared_ptr<GetString::Request> request,
+                                   std::shared_ptr<GetString::Response> response) {
+        readCustomerDataCallback(request, response);
       });
+  set_user_calib_params_srv_ = node_->create_service<SetUserCalibParams>(
+      "set_user_calib_params", [this](const std::shared_ptr<SetUserCalibParams::Request> request,
+                                      std::shared_ptr<SetUserCalibParams::Response> response) {
+        setUserCalibParamsCallback(request, response);
+      });
+  get_user_calib_params_srv_ = node_->create_service<GetUserCalibParams>(
+      "get_user_calib_params", [this](const std::shared_ptr<GetUserCalibParams::Request> request,
+                                      std::shared_ptr<GetUserCalibParams::Response> response) {
+        getUserCalibParamsCallback(request, response);
+      });
+  set_streams_enable_srv_ = node_->create_service<SetBool>(
+      "set_streams_enable", [this](const std::shared_ptr<SetBool::Request> request,
+                                   std::shared_ptr<SetBool::Response> response) {
+        setStreamsEnableCallback(request, response);
+      });
+  get_streams_enable_srv_ = node_->create_service<GetBool>(
+      "get_streams_enable", [this](const std::shared_ptr<GetBool::Request> request,
+                                   std::shared_ptr<GetBool::Response> response) {
+        getStreamsEnableCallback(request, response);
+      });
+}
+void OBCameraNode::setStreamsEnableCallback(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+  try {
+    if (request->data) {
+      startStreams();
+      response->success = true;
+      response->message = "streams started";
+    } else {
+      stopStreams();
+      response->success = true;
+      response->message = "streams stopped";
+    }
+  } catch (const ob::Error& e) {
+    response->success = false;
+    response->message = e.getMessage();
+  } catch (const std::exception& e) {
+    response->success = false;
+    response->message = e.what();
+  } catch (...) {
+    response->success = false;
+    response->message = "unknown error";
+  }
+}
+
+void OBCameraNode::getStreamsEnableCallback(
+    const std::shared_ptr<orbbec_camera_msgs::srv::GetBool::Request> request,
+    std::shared_ptr<orbbec_camera_msgs::srv::GetBool::Response> response) {
+  (void)request;
+  try {
+    response->data = pipeline_started_.load();
+    response->success = true;
+  } catch (...) {
+    response->success = false;
+    response->message = "unknown error";
+  }
 }
 
 void OBCameraNode::setExposureCallback(const std::shared_ptr<SetInt32::Request>& request,
@@ -721,6 +778,8 @@ void OBCameraNode::getDeviceInfoCallback(const std::shared_ptr<GetDeviceInfo::Re
     response->info.serial_number = device_info->getSerialNumber();
     response->info.firmware_version = device_info->getFirmwareVersion();
     response->info.supported_min_sdk_version = device_info->getSupportedMinSdkVersion();
+    response->info.current_sdk_version = getObSDKVersion();
+    response->info.hardware_version = device_info->getHardwareVersion();
     response->success = true;
   } catch (const ob::Error& e) {
     response->success = false;
@@ -972,7 +1031,7 @@ void OBCameraNode::toggleSensorCallback(const std::shared_ptr<SetBool::Request>&
   }
   if (!msg.empty()) {
     RCLCPP_ERROR_STREAM(logger_, msg);
-    response->success = false;
+    response->success = true;
     response->message = msg;
     return;
   }
@@ -1141,50 +1200,141 @@ void OBCameraNode::sendSoftwareTriggerCallback(
   }
 }
 
-void OBCameraNode::setWriteCustomerData(const std::shared_ptr<SetString::Request>& request,
-                                        std::shared_ptr<SetString::Response>& response) {
-  if (request->data.empty()) {
-    response->success = false;
-    response->message = "set write customer data is empty";
-    return;
+bool OBCameraNode::writeCustomerData(const std::string& data) {
+  if (data.empty()) return false;
+
+  std::string md5_value = calcMD5(data);
+  uint32_t data_len_net = htonl(static_cast<uint32_t>(data.size()));
+  std::string len_bytes(reinterpret_cast<char*>(&data_len_net), sizeof(data_len_net));
+
+  std::string write_buffer = len_bytes + md5_value + data;
+  device_->writeCustomerData(write_buffer.c_str(), write_buffer.size());
+
+  std::vector<uint8_t> read_buffer(write_buffer.size() + 8);
+  uint32_t read_len = 0;
+  device_->readCustomerData(read_buffer.data(), &read_len);
+
+  if (read_len < sizeof(uint32_t) + 32) return false;
+
+  uint32_t read_data_len_net = 0;
+  memcpy(&read_data_len_net, read_buffer.data(), sizeof(uint32_t));
+  uint32_t read_data_len = ntohl(read_data_len_net);
+
+  std::string md5_read(reinterpret_cast<char*>(read_buffer.data() + sizeof(uint32_t)), 32);
+  std::string data_read(reinterpret_cast<char*>(read_buffer.data() + sizeof(uint32_t) + 32),
+                        read_data_len);
+
+  return calcMD5(data_read) == md5_read;
+}
+
+bool OBCameraNode::readCustomerData(std::string& out_data) {
+  std::vector<uint8_t> read_buffer(40960);
+  uint32_t read_len = 0;
+  device_->readCustomerData(read_buffer.data(), &read_len);
+  if (read_len < sizeof(uint32_t) + 32) {
+    return false;
   }
-  try {
-    device_->writeCustomerData(request->data.c_str(), request->data.size());
-    response->message = "set write customer data is " + request->data;
-    response->success = true;
-    return;
-  } catch (const ob::Error& e) {
-    response->message = e.getMessage();
-    response->success = false;
-  } catch (const std::exception& e) {
-    response->message = e.what();
-    response->success = false;
-  } catch (...) {
-    response->message = "unknown error";
-    response->success = false;
+  uint32_t read_data_len_net = 0;
+  memcpy(&read_data_len_net, read_buffer.data(), sizeof(uint32_t));
+  uint32_t read_data_len = ntohl(read_data_len_net);
+  std::string md5_read(reinterpret_cast<char*>(read_buffer.data() + sizeof(uint32_t)), 32);
+  std::string data_read(reinterpret_cast<char*>(read_buffer.data() + sizeof(uint32_t) + 32),
+                        read_data_len);
+  if (calcMD5(data_read) == md5_read) {
+    out_data = std::move(data_read);
+    return true;
+  } else {
+    return false;
   }
 }
-void OBCameraNode::setReadCustomerData(const std::shared_ptr<SetString::Request>& request,
-                                       std::shared_ptr<SetString::Response>& response) {
+
+void OBCameraNode::writeCustomerDataCallback(const std::shared_ptr<SetString::Request>& request,
+                                             std::shared_ptr<SetString::Response>& response) {
+  if (request->data.empty()) {
+    response->success = false;
+    response->message = "data empty";
+    return;
+  }
+
+  try {
+    if (writeCustomerData(request->data)) {
+      write_customer_data_success_ = true;
+      response->success = true;
+      response->message = "write and verify success";
+      user_calibration_ready_ = true;
+    } else {
+      write_customer_data_success_ = false;
+      response->success = false;
+      response->message = "write failed: MD5 mismatch or read too short";
+      user_calibration_ready_ = false;
+    }
+  } catch (...) {
+    response->success = false;
+    response->message = "write exception";
+  }
+}
+
+void OBCameraNode::readCustomerDataCallback(const std::shared_ptr<GetString::Request>& request,
+                                            std::shared_ptr<GetString::Response>& response) {
   (void)request;
   try {
-    std::vector<uint8_t> customer_date;
-    customer_date.resize(40960);
-    uint32_t customer_date_len = 0;
-    device_->readCustomerData(customer_date.data(), &customer_date_len);
-    std::string customer_date_str(customer_date.begin(), customer_date.end());
-    response->message = "read customer data is " + customer_date_str;
-    response->success = true;
-    return;
-  } catch (const ob::Error& e) {
-    response->message = e.getMessage();
-    response->success = false;
-  } catch (const std::exception& e) {
-    response->message = e.what();
-    response->success = false;
+    std::string data;
+    if (readCustomerData(data)) {
+      response->success = true;
+      response->data = std::move(data);
+      response->message = "read success";
+    } else {
+      response->success = false;
+      response->message = "read failed: MD5 mismatch or data too short";
+    }
   } catch (...) {
-    response->message = "unknown error";
     response->success = false;
+    response->message = "read exception";
+  }
+}
+void OBCameraNode::setUserCalibParamsCallback(
+    const std::shared_ptr<SetUserCalibParams::Request>& request,
+    std::shared_ptr<SetUserCalibParams::Response>& response) {
+  try {
+    std::ostringstream ss;
+    for (const auto& v : request->k) ss << v << " ";
+    for (const auto& v : request->d) ss << v << " ";
+    for (const auto& v : request->rotation) ss << v << " ";
+    for (const auto& v : request->translation) ss << v << " ";
+    std::string serialized_data = ss.str();
+    if (writeCustomerData(serialized_data)) {
+      response->success = true;
+      response->message = "write and verify success";
+    } else {
+      response->success = false;
+      response->message = "write failed";
+    }
+  } catch (...) {
+    response->success = false;
+    response->message = "exception occurred";
+  }
+}
+void OBCameraNode::getUserCalibParamsCallback(
+    const std::shared_ptr<GetUserCalibParams::Request>& request,
+    std::shared_ptr<GetUserCalibParams::Response>& response) {
+  (void)request;
+  try {
+    std::string data_read;
+    if (!readCustomerData(data_read)) {
+      response->success = false;
+      response->message = "read failed";
+      return;
+    }
+    std::istringstream ss(data_read);
+    for (size_t i = 0; i < 9; ++i) ss >> response->k[i];
+    for (size_t i = 0; i < 8; ++i) ss >> response->d[i];
+    for (size_t i = 0; i < 9; ++i) ss >> response->rotation[i];
+    for (size_t i = 0; i < 3; ++i) ss >> response->translation[i];
+    response->success = true;
+    response->message = "read success";
+  } catch (...) {
+    response->success = false;
+    response->message = "exception occurred";
   }
 }
 }  // namespace orbbec_camera

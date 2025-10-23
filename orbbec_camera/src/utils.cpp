@@ -340,6 +340,8 @@ OBFormat OBFormatFromString(const std::string &format) {
     return OB_FORMAT_BYR2;
   } else if (fixed_format == "RW16") {
     return OB_FORMAT_RW16;
+  } else if (fixed_format == "Y12C4") {
+    return OB_FORMAT_Y12C4;
   }
   //   else if (fixed_format == "DISP16") {
   //     return OB_FORMAT_DISP16;
@@ -417,6 +419,8 @@ std::string OBFormatToString(const OBFormat &format) {
       return "BYR2";
     case OB_FORMAT_RW16:
       return "RW16";
+    case OB_FORMAT_Y12C4:
+      return "Y12C4";
     // case OB_FORMAT_DISP16:
     //   return "DISP16";
     default:
@@ -932,5 +936,21 @@ std::string getDistortionModels(OBCameraDistortion distortion) {
     default:
       return sensor_msgs::distortion_models::PLUMB_BOB;
   }
+}
+
+std::string calcMD5(const std::string &data) {
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_len = 0;
+
+  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+  EVP_DigestInit_ex(ctx, EVP_md5(), nullptr);
+  EVP_DigestUpdate(ctx, data.data(), data.size());
+  EVP_DigestFinal_ex(ctx, digest, &digest_len);
+  EVP_MD_CTX_free(ctx);
+
+  std::stringstream ss;
+  ss << std::hex << std::setfill('0');
+  for (unsigned int i = 0; i < digest_len; ++i) ss << std::setw(2) << (int)digest[i];
+  return ss.str();
 }
 }  // namespace orbbec_camera

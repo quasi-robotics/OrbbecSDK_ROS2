@@ -67,7 +67,7 @@ def generate_launch_description():
         DeclareLaunchArgument("enable_gyro", default_value="false"),
         DeclareLaunchArgument("gyro_rate", default_value="200hz"),
         DeclareLaunchArgument("gyro_range", default_value="1000dps"),
-        DeclareLaunchArgument("liner_accel_cov", default_value="0.01"),
+        DeclareLaunchArgument("linear_accel_cov", default_value="0.01"),
         DeclareLaunchArgument("angular_vel_cov", default_value="0.01"),
         DeclareLaunchArgument("publish_tf", default_value="true"),
         DeclareLaunchArgument("tf_publish_rate", default_value="0.0"),
@@ -105,9 +105,11 @@ def generate_launch_description():
         DeclareLaunchArgument("ordered_pc", default_value="false"),
         DeclareLaunchArgument("enable_depth_scale", default_value="true"),
         DeclareLaunchArgument("align_mode", default_value="SW"),
+        DeclareLaunchArgument('align_target_stream', default_value='COLOR'),# COLOR or DEPTH
         DeclareLaunchArgument("laser_energy_level", default_value="-1"),
         DeclareLaunchArgument("enable_heartbeat", default_value="false"),
         DeclareLaunchArgument("time_domain", default_value="global"),
+        DeclareLaunchArgument('device_preset', default_value='Custom'),
     ]
 
     # Node configuration

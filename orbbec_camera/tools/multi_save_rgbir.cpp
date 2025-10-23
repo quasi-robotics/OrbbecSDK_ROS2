@@ -5,7 +5,7 @@
 #include <orbbec_camera/utils.h>
 #include "orbbec_camera/ob_camera_node.h"
 #include "orbbec_camera_msgs/msg/metadata.hpp"
-#if defined(ROS_KILTED)
+#if __has_include(<message_filters/subscriber.hpp>)
 #include <message_filters/subscriber.hpp>
 #include <message_filters/sync_policies/approximate_time.hpp>
 #include <message_filters/synchronizer.hpp>
@@ -90,7 +90,7 @@ class MultiCameraSubscriber : public rclcpp::Node {
            pid == GEMINI_335L_PID || pid == GEMINI_330L_PID || pid == GEMINI_336L_PID ||
            pid == GEMINI_335LG_PID || pid == GEMINI_336LG_PID || pid == GEMINI_335LE_PID ||
            pid == GEMINI_336LE_PID || pid == CUSTOM_ADVANTECH_GEMINI_336_PID ||
-           pid == CUSTOM_ADVANTECH_GEMINI_336L_PID;
+           pid == CUSTOM_ADVANTECH_GEMINI_336L_PID || pid == GEMINI_338_PID;
   }
   void params_init() {
     std::ifstream file(

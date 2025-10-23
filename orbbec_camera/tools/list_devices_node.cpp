@@ -54,6 +54,12 @@ int main() {
         RCLCPP_INFO_STREAM(rclcpp::get_logger("list_device_node"), "ip address: " << ip_address);
         RCLCPP_INFO_STREAM(rclcpp::get_logger("list_device_node"),
                            "usb connect type: " << connection_type);
+        RCLCPP_INFO_STREAM(rclcpp::get_logger("list_device_node"),
+                           "MAC address: " << list->getUid(i));
+        RCLCPP_INFO_STREAM(rclcpp::get_logger("list_device_node"),
+                           "subnet mask: " << list->getSubnetMask(i));
+        RCLCPP_INFO_STREAM(rclcpp::get_logger("list_device_node"),
+                           "gateway: " << list->getGateway(i));
         std::cout << std::endl;
       }
     }

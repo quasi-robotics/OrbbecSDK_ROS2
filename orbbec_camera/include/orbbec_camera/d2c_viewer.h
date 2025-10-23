@@ -14,7 +14,7 @@
 * limitations under the License.
 *******************************************************************************/
 #pragma once
-#if defined(ROS_KILTED)
+#if __has_include(<message_filters/subscriber.hpp>)
 #include <message_filters/subscriber.hpp>
 #include <message_filters/sync_policies/approximate_time.hpp>
 #include <message_filters/synchronizer.hpp>

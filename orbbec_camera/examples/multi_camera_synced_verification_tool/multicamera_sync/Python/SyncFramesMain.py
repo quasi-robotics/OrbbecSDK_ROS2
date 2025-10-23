@@ -4,9 +4,7 @@ import json
 import platform
 
 def list_subdirectories(path):
-    # 遍历指定目录
     for f in os.listdir(path):
-        # 判断是否是子目录
         if os.path.isdir(os.path.join(path, f)):
             yield f
 
@@ -33,7 +31,7 @@ def execute_sync_width_pid(frames_dir, pid):
         sync_script_file="script/config_frameMatch-systemTimestamp.py"
     elif pid.lower() == "0x0660":
         sync_script_file="script/config_frameMatch-Astra2_new.py"
-    elif pid.lower() == "0x0803" or pid.lower() == "0x0807" or pid.lower() == "0x0801" or pid.lower() == "0x0805" or pid.lower() == "0x080b" or pid.lower() == "0x080e":
+    elif pid.lower() == "0x0800" or pid.lower() == "0x0804" or pid.lower() == "0x0803" or pid.lower() == "0x0807" or pid.lower() == "0x0801" or pid.lower() == "0x0805" or pid.lower() == "0x080b" or pid.lower() == "0x080e" or pid.lower() == "0x080f" or pid.lower() == "0x0A13":
         sync_script_file="script/config_frameMatch_g330.py"
     else:
         sync_script_file="script/config_frameMatch.py"
@@ -58,26 +56,21 @@ def sync_frames(frames_dir):
     execute_sync_width_pid(frames_dir, pid)
 
 def main():
-    # 指定目录路径
     frames_output_path = os.path.abspath("../output")
 
-    # 获取所有子目录
     subdirectories = list(list_subdirectories(frames_output_path))
 
     if not subdirectories:
         print("No subdirectories found in the specified directory.")
 
-    # 打印子目录列表并让用户选择
     for i, subdir in enumerate(subdirectories):
         print(f"{i + 1}. {subdir}")
 
-    # 获取用户输入
     choice = input("Please select a subdirectory by number (or 'q' to quit): ")
 
     if choice.lower() == 'q':
         return
 
-    # 验证用户输入
     is_index_valid = False
     try:
         index = int(choice) - 1

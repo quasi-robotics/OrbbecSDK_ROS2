@@ -67,7 +67,7 @@ def generate_launch_description():
         DeclareLaunchArgument("enable_gyro", default_value="false"),
         DeclareLaunchArgument("gyro_rate", default_value="100hz"),
         DeclareLaunchArgument("gyro_range", default_value="1000dps"),
-        DeclareLaunchArgument("liner_accel_cov", default_value="0.01"),
+        DeclareLaunchArgument("linear_accel_cov", default_value="0.01"),
         DeclareLaunchArgument("angular_vel_cov", default_value="0.01"),
         DeclareLaunchArgument("publish_tf", default_value="true"),
         DeclareLaunchArgument("tf_publish_rate", default_value="0.0"),
@@ -111,9 +111,19 @@ def generate_launch_description():
         DeclareLaunchArgument("ordered_pc", default_value="false"),
         DeclareLaunchArgument("enable_depth_scale", default_value="true"),
         DeclareLaunchArgument("align_mode", default_value="HW"),
+        DeclareLaunchArgument('align_target_stream', default_value='COLOR'),# COLOR or DEPTH
         DeclareLaunchArgument("laser_energy_level", default_value="-1"),
         DeclareLaunchArgument("enable_heartbeat", default_value="false"),
         DeclareLaunchArgument("time_domain", default_value="global"),
+        DeclareLaunchArgument('device_preset', default_value='Custom'),
+
+        # Force IP parameters
+        DeclareLaunchArgument("force_ip_enable", default_value="false"),  # Whether to enable Force IP function
+        DeclareLaunchArgument("force_ip_mac", default_value=""),  # If multiple cameras are connected, specify target MAC (e.g. "54:14:FD:06:07:DA")
+        DeclareLaunchArgument("force_ip_address", default_value="192.168.1.10"),  # Static IP address to assign
+        DeclareLaunchArgument("force_ip_subnet_mask", default_value="255.255.255.0"),  # Subnet mask used for static IP
+        DeclareLaunchArgument("force_ip_gateway", default_value="192.168.1.1"),  # Gateway address used for static IP
+
     ]
 
     # Node configuration

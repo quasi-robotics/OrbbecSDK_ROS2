@@ -329,7 +329,7 @@ orbbec_ros:
       # enable_sync_output_accel_gyro
       enable_sync_output_accel_gyro: false
       # Covariance of the linear acceleration
-      liner_accel_cov: 0.01
+      linear_accel_cov: 0.01
       # Covariance of the angular velocity
       angular_vel_cov: 0.01
 
@@ -359,7 +359,7 @@ orbbec_ros:
       # Publish D2C superimposed image (only for testing).
       enable_d2c_viewer: false
       # false: switch to software disparity convert to depth, true: switch to hardware disparity convert to depth
-      enable_hardware_d2d: true
+      disparity_to_depth_mode: 'HW'
       # If false, the host time will not be synchronized with the device time
       enable_sync_host_time: true
       # URL of the IR image info
@@ -412,13 +412,13 @@ orbbec_ros:
           hdr_index1_laser_control: 1
           hdr_index1_depth_exposure: 1
           hdr_index1_depth_gain: 16
-          hdr_index1_ir_brightness: 20
-          hdr_index1_ir_ae_max_exposure: 2000
+          hdr_index1_ir_brightness: 30
+          hdr_index1_ir_ae_max_exposure: 30458
           hdr_index0_laser_control: 1
           hdr_index0_depth_exposure: 7500
           hdr_index0_depth_gain: 16
-          hdr_index0_ir_brightness: 60
-          hdr_index0_ir_ae_max_exposure: 10000
+          hdr_index0_ir_brightness: 90
+          hdr_index0_ir_ae_max_exposure: 30458
 
         interleave_laser_param:
           laser_index1_laser_control: 0

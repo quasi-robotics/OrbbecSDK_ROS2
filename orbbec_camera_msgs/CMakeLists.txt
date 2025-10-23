@@ -17,6 +17,7 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(
     ${PROJECT_NAME}
     "msg/DeviceInfo.msg"
+    "msg/DeviceStatus.msg"
     "msg/Extrinsics.msg"
     "msg/Metadata.msg"
     "msg/IMUInfo.msg"
@@ -30,6 +31,8 @@ rosidl_generate_interfaces(
     "srv/SetInt32.srv"
     "srv/SetString.srv"
     "srv/SetArrays.srv"
+    "srv/GetUserCalibParams.srv"
+    "srv/SetUserCalibParams.srv"
     DEPENDENCIES
     sensor_msgs
     std_msgs

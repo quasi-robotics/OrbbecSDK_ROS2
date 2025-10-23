@@ -16,17 +16,20 @@
 #pragma once
 #include <atomic>
 #include <thread>
+#include <chrono>
 
 #include <rclcpp/rclcpp.hpp>
 #include <semaphore.h>
 #include "ob_camera_node.h"
 #include "utils.h"
 #include "dynamic_params.h"
+#include <orbbec_camera_msgs/msg/device_status.hpp>
 
 #include "libobsensor/ObSensor.hpp"
 #include <pthread.h>
 #include <std_srvs/srv/empty.hpp>
 #include <backward_ros/backward.hpp>
+#include "libobsensor/hpp/Device.hpp"
 
 namespace orbbec_camera {
 
@@ -69,6 +72,8 @@ class OBCameraNodeDriver : public rclcpp::Node {
 
   void resetDevice();
 
+  void deviceStatusTimer();
+
   void rebootDeviceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> request,
                             std::shared_ptr<std_srvs::srv::Empty::Response> response);
   void presetUpdateCallback(bool firstCall, OBFwUpdateState state, const char* message,
@@ -76,6 +81,8 @@ class OBCameraNodeDriver : public rclcpp::Node {
   void updatePresetFirmware(std::string path);
 
   void firmwareUpdateCallback(OBFwUpdateState state, const char* message, uint8_t percent);
+
+  bool applyForceIpConfig();
 
  private:
   const rclcpp::NodeOptions node_options_;
@@ -104,6 +111,7 @@ class OBCameraNodeDriver : public rclcpp::Node {
   std::mutex reset_device_mutex_;
   std::condition_variable reset_device_cond_;
   std::atomic_bool reset_device_flag_{false};
+  std::chrono::steady_clock::time_point last_reset_device_completion_time_;
   pthread_mutex_t* orb_device_lock_ = nullptr;
   pthread_mutexattr_t orb_device_lock_attr_;
   uint8_t* orb_device_lock_shm_addr_ = nullptr;
@@ -113,6 +121,7 @@ class OBCameraNodeDriver : public rclcpp::Node {
   int net_device_port_ = 0;
   int connection_delay_ = 100;
   bool enable_sync_host_time_ = true;
+  std::chrono::milliseconds time_sync_period_{6000};
   std::string preset_firmware_path_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reboot_device_srv_ = nullptr;
   std::chrono::time_point<std::chrono::system_clock> start_time_;
@@ -120,5 +129,16 @@ class OBCameraNodeDriver : public rclcpp::Node {
   static backward::SignalHandling sh;  // for stack trace
   std::string upgrade_firmware_;
   std::atomic<bool> firmware_update_success_{false};
+  rclcpp::TimerBase::SharedPtr device_status_timer_ = nullptr;
+  int device_status_interval_hz = 2;  // 2Hz
+  rclcpp::Publisher<orbbec_camera_msgs::msg::DeviceStatus>::SharedPtr device_status_pub_ = nullptr;
+  std::string node_name_;
+  bool force_ip_enable_{false};
+  bool force_ip_dhcp_{false};
+  std::string force_ip_mac_;          // e.g. "54:14:FD:06:07:DA"
+  std::string force_ip_address_;      // e.g. "192.168.1.10"
+  std::string force_ip_subnet_mask_;  // e.g. "255.255.255.0"
+  std::string force_ip_gateway_;      // e.g. "192.168.1.1"
+  std::atomic<bool> force_ip_success_{false};
 };
 }  // namespace orbbec_camera

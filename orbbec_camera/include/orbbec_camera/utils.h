@@ -27,6 +27,10 @@
 #include "magic_enum/magic_enum.hpp"
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <opencv2/opencv.hpp>
+#include <openssl/evp.h>
+#include <sstream>
+#include <iomanip>
+#include <arpa/inet.h>
 
 namespace orbbec_camera {
 inline void LogFatal(const char* file, int line, const std::string& message) {
@@ -35,15 +39,25 @@ inline void LogFatal(const char* file, int line, const std::string& message) {
 }
 }  // namespace orbbec_camera
 
-#define TRY_EXECUTE_BLOCK(block)                                                                 \
-  try {                                                                                          \
-    block;                                                                                       \
-  } catch (const ob::Error& e) {                                                                 \
-    RCLCPP_ERROR(logger_, "Error in %s at line %d: %s", __FUNCTION__, __LINE__, e.getMessage()); \
-  } catch (const std::exception& e) {                                                            \
-    RCLCPP_ERROR(logger_, "Exception in %s at line %d: %s", __FUNCTION__, __LINE__, e.what());   \
-  } catch (...) {                                                                                \
-    RCLCPP_ERROR(logger_, "Unknown exception in %s at line %d", __FUNCTION__, __LINE__);         \
+#define TRY_EXECUTE_BLOCK(block)                                                                  \
+  try {                                                                                           \
+    block;                                                                                        \
+  } catch (const ob::Error& e) {                                                                  \
+    std::string error_msg = e.getMessage() ? e.getMessage() : "Unknown OB error";                 \
+    if (error_msg.find("Device is deactivated") != std::string::npos ||                           \
+        error_msg.find("disconnected") != std::string::npos ||                                    \
+        error_msg.find("Send control transfer failed") != std::string::npos) {                    \
+      RCLCPP_WARN(logger_,                                                                        \
+                  "Device communication error in %s at line %d: %s - Device may be disconnected", \
+                  __FUNCTION__, __LINE__, error_msg.c_str());                                     \
+    } else {                                                                                      \
+      RCLCPP_ERROR(logger_, "Error in %s at line %d: %s", __FUNCTION__, __LINE__,                 \
+                   error_msg.c_str());                                                            \
+    }                                                                                             \
+  } catch (const std::exception& e) {                                                             \
+    RCLCPP_ERROR(logger_, "Exception in %s at line %d: %s", __FUNCTION__, __LINE__, e.what());    \
+  } catch (...) {                                                                                 \
+    RCLCPP_ERROR(logger_, "Unknown exception in %s at line %d", __FUNCTION__, __LINE__);          \
   }
 
 #define TRY_TO_SET_PROPERTY(func, property, value)                                             \
@@ -194,4 +208,6 @@ cv::Mat undistortImage(const cv::Mat& image, const OBCameraIntrinsic& intrinsic,
                        const OBCameraDistortion& distortion);
 
 std::string getDistortionModels(OBCameraDistortion distortion);
+
+std::string calcMD5(const std::string& data);
 }  // namespace orbbec_camera

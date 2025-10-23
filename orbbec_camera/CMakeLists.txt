@@ -7,21 +7,13 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -O3")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}  -fPIC -g3")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -O3")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fPIC -g3")
-set(CMAKE_BUILD_TYPE "Release")
 option(USE_RK_HW_DECODER "Use Rockchip hardware decoder" OFF)
 option(USE_NV_HW_DECODER "Use Nvidia hardware decoder" OFF)
+option(INSTALL_UDEV_RULES "Install udev rule for Orbbec cameras" ON)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wall -Wextra -Werror -Wno-pedantic -Wno-array-bounds)
 endif()
-# Check if ROS Jazzy or iron is installed
-if ("$ENV{ROS_DISTRO}" STREQUAL "jazzy")
-    add_compile_definitions(ROS_JAZZY)
-elseif ("$ENV{ROS_DISTRO}" STREQUAL "iron")
-    add_compile_definitions(ROS_IRON)
-elseif ("$ENV{ROS_DISTRO}" STREQUAL "kilted")
-    add_compile_definitions(ROS_KILTED)
-endif ()
 
 # find dependencies
 set(dependencies
@@ -42,7 +34,6 @@ set(dependencies
     std_msgs
     std_srvs
     tf2
-    tf2_eigen
     tf2_msgs
     tf2_ros
     tf2_sensor_msgs
@@ -50,6 +41,7 @@ set(dependencies
     diagnostic_updater
     diagnostic_msgs
     statistics_msgs
+    yaml-cpp
 )
 
 foreach(dep IN LISTS dependencies)
@@ -115,6 +107,7 @@ set(COMMON_LIBRARIES
     Threads::Threads
     -lrt
     -ldw
+    yaml-cpp
 )
 if(USE_RK_HW_DECODER)
     list(APPEND COMMON_LIBRARIES ${RK_MPP_LIBRARIES} ${RGA_LIBRARIES})
@@ -191,8 +184,19 @@ rclcpp_components_register_node(
 add_orbbec_executable(list_devices_node tools/list_devices_node.cpp)
 add_orbbec_executable(list_depth_work_mode_node tools/list_depth_work_mode.cpp)
 add_orbbec_executable(list_camera_profile_mode_node tools/list_camera_profile.cpp)
+add_orbbec_executable(set_device_ip tools/set_device_ip.cpp)
 add_orbbec_executable(topic_statistics_node tools/topic_statistics.cpp)
 add_orbbec_executable(ob_benchmark_node tools/ob_benchmark.cpp)
+add_orbbec_executable(435le_example_node examples/435le_new_interface/camera_example_node.cpp)
+add_orbbec_executable(service_benchmark_node scripts/service_benchmark_node.cpp)
+add_orbbec_executable(image_sync_example_node examples/multi_camera_time_sync/image_sync_example_node.cpp)
+
+install(
+  PROGRAMS
+    scripts/common_benchmark_node.py
+    scripts/service_benchmark_node.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 add_library(frame_latency SHARED tools/frame_latency.cpp)
 target_include_directories(frame_latency PUBLIC ${COMMON_INCLUDE_DIRS})
@@ -235,13 +239,17 @@ file(GLOB_RECURSE EXTENSION_FILES "${ORBBEC_LIBS_DIR}/extensions/*")
 if(EXTENSION_FILES)
     install(FILES ${EXTENSION_FILES} DESTINATION lib/extensions/)
 endif()
+if(INSTALL_UDEV_RULES)
+    # Install udev rule into package share so user can manually copy with sudo if desired
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/99-obsensor-libusb.rules
+            DESTINATION share/${PROJECT_NAME}/udev)
+endif()
 if(DEFINED ENV{BUILDING_PACKAGE})
     # Install udev rules
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/99-obsensor-libusb.rules DESTINATION /etc/udev/rules.d)
 endif()
 
-install(TARGETS list_devices_node list_depth_work_mode_node list_camera_profile_mode_node topic_statistics_node
-                ob_benchmark_node DESTINATION lib/${PROJECT_NAME}/
+install(TARGETS list_devices_node list_depth_work_mode_node list_camera_profile_mode_node topic_statistics_node  service_benchmark_node ob_benchmark_node 435le_example_node set_device_ip image_sync_example_node DESTINATION lib/${PROJECT_NAME}/
 )
 
 if(BUILD_TESTING)
@@ -249,7 +257,7 @@ if(BUILD_TESTING)
     ament_lint_auto_find_test_dependencies()
 endif()
 
-ament_export_include_directories(include ${ORBBEC_INCLUDE_DIR})
+ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
 ament_export_dependencies(${dependencies} ${ORBBEC_LIBS})
 
