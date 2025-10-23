@@ -42,6 +42,7 @@ set(dependencies
     diagnostic_msgs
     statistics_msgs
     yaml-cpp
+    OpenSSL
 )
 
 foreach(dep IN LISTS dependencies)
@@ -105,6 +106,7 @@ set(COMMON_LIBRARIES
     -lOrbbecSDK
     -L${ORBBEC_LIBS_DIR}
     Threads::Threads
+    OpenSSL::SSL
     -lrt
     -ldw
     yaml-cpp
