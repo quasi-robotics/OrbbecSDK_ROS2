@@ -43,6 +43,7 @@ set(dependencies
     statistics_msgs
     yaml-cpp
     OpenSSL
+    camera_calibration_parsers
 )
 
 foreach(dep IN LISTS dependencies)

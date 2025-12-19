@@ -67,7 +67,7 @@ OBCameraNode::OBCameraNode(rclcpp::Node *node, std::shared_ptr<ob::Device> devic
   if (enable_d2c_viewer_) {
     auto rgb_qos = getRMWQosProfileFromString(image_qos_[COLOR]);
     auto depth_qos = getRMWQosProfileFromString(image_qos_[DEPTH]);
-    d2c_viewer_ = std::make_unique<D2CViewer>(node_, rgb_qos, depth_qos);
+    d2c_viewer_ = std::make_unique<D2CViewer>(node_, rgb_qos, depth_qos, use_intra_process_);
   }
   if (enable_stream_[COLOR]) {
     rgb_buffer_ = new uint8_t[width_[COLOR] * height_[COLOR] * 4];
@@ -345,9 +345,14 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR_STREAM(logger_, "Failed to load device preset");
     }
   }
-  if (!depth_work_mode_.empty()) {
-    RCLCPP_INFO_STREAM(logger_, "Set depth work mode: " << depth_work_mode_);
+  if (!depth_work_mode_.empty() &&
+      device_->isPropertySupported(OB_STRUCT_CURRENT_DEPTH_ALG_MODE, OB_PERMISSION_READ_WRITE)) {
+    auto depthModeList = device_->getDepthWorkModeList();
+    for (uint32_t i = 0; i < depthModeList->getCount(); i++) {
+      RCLCPP_INFO_STREAM(logger_, "depthModeList[" << i << "]: " << (*depthModeList)[i].name);
+    }
     TRY_EXECUTE_BLOCK(device_->switchDepthWorkMode(depth_work_mode_.c_str()));
+    RCLCPP_INFO_STREAM(logger_, "Set depth work mode: " << depth_work_mode_);
   }
   if (!sync_mode_str_.empty()) {
     auto sync_config = device_->getMultiDeviceSyncConfig();
@@ -656,6 +661,11 @@ void OBCameraNode::setupDevices() {
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_DEPTH_AUTO_EXPOSURE_PRIORITY_INT,
                         set_enable_depth_auto_exposure_priority);
   }
+  if (device_->isPropertySupported(OB_PROP_IR_AUTO_EXPOSURE_BOOL, OB_PERMISSION_WRITE)) {
+    RCLCPP_INFO_STREAM(logger_,
+                       "Setting IR auto exposure to " << (enable_ir_auto_exposure_ ? "ON" : "OFF"));
+    TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_IR_AUTO_EXPOSURE_BOOL, enable_ir_auto_exposure_);
+  }
   if (mean_intensity_set_point_ != -1 &&
       device_->isPropertySupported(OB_PROP_IR_BRIGHTNESS_INT, OB_PERMISSION_WRITE)) {
     auto range = device_->getIntPropertyRange(OB_PROP_IR_BRIGHTNESS_INT);
@@ -692,7 +702,6 @@ void OBCameraNode::setupDevices() {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_IR_BRIGHTNESS_INT, ir_brightness_);
     }
   }
-
   if (ir_exposure_ != -1 &&
       device_->isPropertySupported(OB_PROP_IR_EXPOSURE_INT, OB_PERMISSION_WRITE)) {
     auto range = device_->getIntPropertyRange(OB_PROP_IR_EXPOSURE_INT);
@@ -713,11 +722,6 @@ void OBCameraNode::setupDevices() {
       RCLCPP_INFO_STREAM(logger_, "Setting IR gain to " << ir_gain_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_IR_GAIN_INT, ir_gain_);
     }
-  }
-  if (device_->isPropertySupported(OB_PROP_IR_AUTO_EXPOSURE_BOOL, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_,
-                       "Setting IR auto exposure to " << (enable_ir_auto_exposure_ ? "ON" : "OFF"));
-    TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_IR_AUTO_EXPOSURE_BOOL, enable_ir_auto_exposure_);
   }
   if (device_->isPropertySupported(OB_PROP_IR_LONG_EXPOSURE_BOOL, OB_PERMISSION_WRITE)) {
     RCLCPP_INFO_STREAM(logger_,
