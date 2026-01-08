@@ -12,37 +12,29 @@ def generate_launch_description():
     launch_file_dir = os.path.join(package_dir, 'launch')
     launch1_include = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(launch_file_dir, 'gemini_330_series.launch.py')
+            os.path.join(launch_file_dir, 'lidar.launch.py')
         ),
         launch_arguments={
-            'camera_name': 'camera_01',
-            'usb_port': '2-1',
+            'camera_name': 'lidar_01',
             'device_num': '2',
-            'sync_mode': 'standalone',
-            'enable_left_ir': 'true',
-            'enable_right_ir': 'true',
-            'log_level': 'none',
-            'log_file_name': 'camera_01.log',
+            'net_device_ip': '192.168.1.100',
+            'net_device_port': '2228',
         }.items()
     )
 
     launch2_include = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(launch_file_dir, 'gemini_330_series.launch.py')
+            os.path.join(launch_file_dir, 'lidar.launch.py')
         ),
         launch_arguments={
-            'camera_name': 'camera_02',
-            'usb_port': '2-3',
+            'camera_name': 'lidar_02',
             'device_num': '2',
-            'sync_mode': 'standalone',
-            'enable_left_ir': 'true',
-            'enable_right_ir': 'true',
-            'log_level': 'none',
-            'log_file_name': 'camera_02.log',
+            'net_device_ip': '192.168.1.101',
+            'net_device_port': '2228',
         }.items()
     )
 
-    # If you need more cameras, just add more launch_include here, and change the usb_port and device_num
+    # If you need more lidar, just add more launch_include here, and change the net_device_ip and net_device_port
 
     # Launch description
     ld = LaunchDescription([

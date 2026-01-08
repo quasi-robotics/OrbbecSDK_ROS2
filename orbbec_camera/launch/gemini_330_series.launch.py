@@ -69,6 +69,7 @@ def load_parameters(context, args):
 
 def generate_launch_description():
     args = [
+        DeclareLaunchArgument('device_type', default_value='camera'),
         DeclareLaunchArgument('camera_name', default_value='camera'),
         DeclareLaunchArgument('depth_registration', default_value='false'),
         DeclareLaunchArgument('serial_number', default_value=''),
@@ -81,6 +82,7 @@ def generate_launch_description():
         DeclareLaunchArgument('uvc_backend', default_value='libuvc'),#libuvc or v4l2
         DeclareLaunchArgument('point_cloud_qos', default_value='default'),
         DeclareLaunchArgument('enable_point_cloud', default_value='true'),
+        DeclareLaunchArgument('point_cloud_decimation_filter_factor', default_value='1'),
         DeclareLaunchArgument('enable_colored_point_cloud', default_value='false'),
         DeclareLaunchArgument('cloud_frame_id', default_value=''),
         DeclareLaunchArgument('connection_delay', default_value='10'),
@@ -186,8 +188,10 @@ def generate_launch_description():
         DeclareLaunchArgument('enumerate_net_device', default_value='true'),
         DeclareLaunchArgument('net_device_ip', default_value=''),
         DeclareLaunchArgument('net_device_port', default_value='0'),
+        DeclareLaunchArgument('device_access_mode', default_value='Default'), # Default, EA or CA . only for 335le
         DeclareLaunchArgument('exposure_range_mode', default_value='default'),#default, ultimate or regular
         DeclareLaunchArgument('log_level', default_value='none'),
+        DeclareLaunchArgument('log_file_name', default_value=''),
         DeclareLaunchArgument('enable_publish_extrinsic', default_value='false'),
         DeclareLaunchArgument('enable_d2c_viewer', default_value='false'),
         DeclareLaunchArgument('disparity_to_depth_mode', default_value='HW'),
@@ -306,7 +310,7 @@ def generate_launch_description():
         DeclareLaunchArgument("force_ip_subnet_mask", default_value="255.255.255.0"),  # Subnet mask used for static IP
         DeclareLaunchArgument("force_ip_gateway", default_value="192.168.1.1"),  # Gateway address used for static IP
 
-        DeclareLaunchArgument('intra_camera_sync_reference', default_value='Middle'),#Start, Middle or End
+        DeclareLaunchArgument('intra_camera_sync_reference', default_value=""),#Start, Middle or End
 
     ]
 

@@ -18,6 +18,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <thread>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <sstream>
 
 #include "orbbec_camera/utils.h"
 #include <filesystem>
@@ -209,6 +210,40 @@ void OBCameraNode::clean() noexcept {
 }
 
 void OBCameraNode::setupDevices() {
+  if (!preset_resolution_config_.empty()) {
+    OBPresetResolutionConfig presetResolutionConfig;
+    std::istringstream iss(preset_resolution_config_);
+    std::string token;
+    std::vector<int> values;
+    values.reserve(4);
+    while (std::getline(iss, token, ',')) {
+      values.push_back(std::stoi(token));
+    }
+
+    if (values.size() >= 4) {
+      presetResolutionConfig.width = values[0];
+      presetResolutionConfig.height = values[1];
+      presetResolutionConfig.irDecimationFactor = values[2];
+      presetResolutionConfig.depthDecimationFactor = values[3];
+    } else {
+      RCLCPP_WARN_STREAM(
+          logger_,
+          "Invalid preset_resolution_config parameter. "
+          "Expected format: width,height,ir_decimation_factor,depth_decimation_factor");
+    }
+
+    RCLCPP_INFO_STREAM(
+        logger_, "Setting preset resolution config to "
+                     << "width: " << presetResolutionConfig.width
+                     << ", height: " << presetResolutionConfig.height << ", ir decimation factor: "
+                     << presetResolutionConfig.irDecimationFactor << ", depth decimation factor: "
+                     << presetResolutionConfig.depthDecimationFactor);
+
+    TRY_EXECUTE_BLOCK(device_->setStructuredData(OB_STRUCT_PRESET_RESOLUTION_CONFIG,
+                                                 (uint8_t *)&presetResolutionConfig,
+                                                 sizeof(presetResolutionConfig)));
+  }
+
   auto sensor_list = device_->getSensorList();
   for (size_t i = 0; i < sensor_list->getCount(); i++) {
     auto sensor = sensor_list->getSensor(i);
@@ -552,6 +587,18 @@ void OBCameraNode::setupDevices() {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_BRIGHTNESS_INT, color_brightness_);
     }
   }
+  if (color_roi_brightness_ != -1 &&
+      device_->isPropertySupported(OB_PROP_COLOR_ROI_BRIGHTNESS_INT, OB_PERMISSION_WRITE)) {
+    auto range = device_->getIntPropertyRange(OB_PROP_COLOR_ROI_BRIGHTNESS_INT);
+    if (color_roi_brightness_ < range.min || color_roi_brightness_ > range.max) {
+      RCLCPP_ERROR(logger_,
+                   "color roi brightness value is out of range[%d,%d], please check the value",
+                   range.min, range.max);
+    } else {
+      RCLCPP_INFO_STREAM(logger_, "Setting color roi brightness to " << color_roi_brightness_);
+      TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_ROI_BRIGHTNESS_INT, color_roi_brightness_);
+    }
+  }
   if (color_sharpness_ != -1 &&
       device_->isPropertySupported(OB_PROP_COLOR_SHARPNESS_INT, OB_PERMISSION_WRITE)) {
     auto range = device_->getIntPropertyRange(OB_PROP_COLOR_SHARPNESS_INT);
@@ -838,7 +885,7 @@ void OBCameraNode::setupDevices() {
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_SDK_GYRO_FRAME_TRANSFORMED_BOOL,
                         enable_gyro_data_correction_);
   }
-  if (isGemini335PID(pid) &&
+  if (isGemini335PID(pid) && !intra_camera_sync_reference_.empty() &&
       (sync_mode_ == OB_MULTI_DEVICE_SYNC_MODE_SOFTWARE_TRIGGERING ||
        sync_mode_ == OB_MULTI_DEVICE_SYNC_MODE_HARDWARE_TRIGGERING) &&
       device_->isPropertySupported(OB_PROP_INTRA_CAMERA_SYNC_REFERENCE_INT, OB_PERMISSION_WRITE)) {
@@ -1779,6 +1826,8 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<std::string>(color_info_url_, "color_info_url", "");
   setAndGetNodeParameter<bool>(enable_colored_point_cloud_, "enable_colored_point_cloud", false);
   setAndGetNodeParameter<bool>(enable_point_cloud_, "enable_point_cloud", false);
+  setAndGetNodeParameter<int>(point_cloud_decimation_filter_factor_,
+                              "point_cloud_decimation_filter_factor", 1);
   setAndGetNodeParameter<std::string>(point_cloud_qos_, "point_cloud_qos", "default");
   setAndGetNodeParameter<bool>(enable_d2c_viewer_, "enable_d2c_viewer", false);
   setAndGetNodeParameter<std::string>(disparity_to_depth_mode_, "disparity_to_depth_mode", "HW");
@@ -1801,6 +1850,7 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<int>(color_white_balance_, "color_white_balance", -1);
   setAndGetNodeParameter<int>(color_ae_max_exposure_, "color_ae_max_exposure", -1);
   setAndGetNodeParameter<int>(color_brightness_, "color_brightness", -1);
+  setAndGetNodeParameter<int>(color_roi_brightness_, "color_roi_brightness", -1);
   setAndGetNodeParameter<int>(color_sharpness_, "color_sharpness", -1);
   setAndGetNodeParameter<int>(color_gamma_, "color_gamma", -1);
   setAndGetNodeParameter<int>(color_saturation_, "color_saturation", -1);
@@ -1838,6 +1888,7 @@ void OBCameraNode::getParameters() {
                                "enable_left_ir_sequence_id_filter", false);
   setAndGetNodeParameter<int>(left_ir_sequence_id_filter_id_, "left_ir_sequence_id_filter_id", -1);
   setAndGetNodeParameter<std::string>(depth_work_mode_, "depth_work_mode", "");
+  setAndGetNodeParameter<std::string>(preset_resolution_config_, "preset_resolution_config", "");
   setAndGetNodeParameter<std::string>(sync_mode_str_, "sync_mode", "");
   setAndGetNodeParameter<int>(depth_delay_us_, "depth_delay_us", 0);
   setAndGetNodeParameter<int>(color_delay_us_, "color_delay_us", 0);
@@ -2154,12 +2205,10 @@ void OBCameraNode::setupPipelineConfig() {
   pipeline_config_ = std::make_shared<ob::Config>();
   auto device_info = device_->getDeviceInfo();
   CHECK_NOTNULL(device_info.get());
-  auto pid = device_info->getPid();
   if (depth_registration_ && enable_stream_[COLOR] && enable_stream_[DEPTH] &&
-      !isGemini335PID(pid)) {
-    OBAlignMode align_mode = align_mode_ == "HW" ? ALIGN_D2C_HW_MODE : ALIGN_D2C_SW_MODE;
+      align_mode_ == "HW") {
+    OBAlignMode align_mode = ALIGN_D2C_HW_MODE;
     RCLCPP_INFO_STREAM(logger_, "set align mode to " << magic_enum::enum_name(align_mode));
-    calibration_param_ = pipeline_->getCalibrationParam(pipeline_config_);
     pipeline_config_->setAlignMode(align_mode);
     RCLCPP_INFO_STREAM(logger_, "enable depth scale " << (enable_depth_scale_ ? "ON" : "OFF"));
     pipeline_config_->setDepthScaleRequire(enable_depth_scale_);
@@ -2324,33 +2373,32 @@ void OBCameraNode::setupPublishers() {
   }
   if (enable_stream_[DEPTH] && enable_stream_[INFRA0] && enable_publish_extrinsic_) {
     depth_to_other_extrinsics_publishers_[INFRA0] =
-        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>(
-            "/" + camera_name_ + "/depth_to_ir", extrinsics_qos);
+        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>("depth_to_ir", extrinsics_qos);
   }
   if (enable_stream_[DEPTH] && enable_stream_[COLOR] && enable_publish_extrinsic_) {
     depth_to_other_extrinsics_publishers_[COLOR] =
-        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>(
-            "/" + camera_name_ + "/depth_to_color", extrinsics_qos);
+        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>("depth_to_color",
+                                                                     extrinsics_qos);
   }
   if (enable_stream_[DEPTH] && enable_stream_[INFRA1] && enable_publish_extrinsic_) {
     depth_to_other_extrinsics_publishers_[INFRA1] =
-        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>(
-            "/" + camera_name_ + "/depth_to_left_ir", extrinsics_qos);
+        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>("depth_to_left_ir",
+                                                                     extrinsics_qos);
   }
   if (enable_stream_[DEPTH] && enable_stream_[INFRA2] && enable_publish_extrinsic_) {
     depth_to_other_extrinsics_publishers_[INFRA2] =
-        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>(
-            "/" + camera_name_ + "/depth_to_right_ir", extrinsics_qos);
+        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>("depth_to_right_ir",
+                                                                     extrinsics_qos);
   }
   if (enable_stream_[DEPTH] && enable_stream_[ACCEL] && enable_publish_extrinsic_) {
     depth_to_other_extrinsics_publishers_[ACCEL] =
-        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>(
-            "/" + camera_name_ + "/depth_to_accel", extrinsics_qos);
+        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>("depth_to_accel",
+                                                                     extrinsics_qos);
   }
   if (enable_stream_[DEPTH] && enable_stream_[GYRO] && enable_publish_extrinsic_) {
     depth_to_other_extrinsics_publishers_[GYRO] =
-        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>(
-            "/" + camera_name_ + "/depth_to_gyro", extrinsics_qos);
+        node_->create_publisher<orbbec_camera_msgs::msg::Extrinsics>("depth_to_gyro",
+                                                                     extrinsics_qos);
   }
   filter_status_pub_ =
       node_->create_publisher<std_msgs::msg::String>("depth_filter_status", extrinsics_qos);
@@ -2404,6 +2452,7 @@ void OBCameraNode::publishDepthPointCloud(const std::shared_ptr<ob::FrameSet> &f
   float depth_scale = depth_frame->getValueScale();
   depth_point_cloud_filter_.setPositionDataScaled(depth_scale);
   depth_point_cloud_filter_.setCreatePointFormat(OB_FORMAT_POINT);
+  depth_point_cloud_filter_.setDecimationFactor(point_cloud_decimation_filter_factor_);
   auto result_frame = depth_point_cloud_filter_.process(depth_frame);
   if (!result_frame) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to process depth frame");
@@ -2515,6 +2564,7 @@ void OBCameraNode::publishColoredPointCloud(const std::shared_ptr<ob::FrameSet> 
   auto depth_scale = depth_frame->getValueScale();
   color_point_cloud_filter_.setPositionDataScaled(depth_scale);
   color_point_cloud_filter_.setCreatePointFormat(OB_FORMAT_RGB_POINT);
+  color_point_cloud_filter_.setDecimationFactor(point_cloud_decimation_filter_factor_);
   auto result_frame = color_point_cloud_filter_.process(frame_set);
   if (!result_frame) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to process depth frame");
@@ -3093,9 +3143,6 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
   if (depth_registration_ && stream_index == DEPTH) {
     frame_id = depth_aligned_frame_id_[stream_index];
   }
-  if (stream_index == COLOR && enable_color_undistortion_) {
-    memset(&distortion, 0, sizeof(distortion));
-  }
   sensor_msgs::msg::CameraInfo camera_info{};
   if (color_info_manager_ && color_info_manager_->isCalibrated() && stream_index == COLOR) {
     camera_info = color_info_manager_->getCameraInfo();
@@ -3116,6 +3163,24 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
     camera_info.header.frame_id = frame_id;
     camera_info.width = width;
     camera_info.height = height;
+  }
+  auto &image = images_[stream_index];
+  if (stream_index == COLOR && enable_color_undistortion_) {
+    auto undistort_result = undistortImage(image, intrinsic, distortion);
+    sensor_msgs::msg::Image::UniquePtr undistorted_image_msg(new sensor_msgs::msg::Image());
+    cv_bridge::CvImage(std_msgs::msg::Header(), encoding_[stream_index], undistort_result.image)
+        .toImageMsg(*undistorted_image_msg);
+    CHECK_NOTNULL(undistorted_image_msg.get());
+    undistorted_image_msg->header.stamp = timestamp;
+    undistorted_image_msg->is_bigendian = false;
+    undistorted_image_msg->step = width * unit_step_size_[stream_index];
+    undistorted_image_msg->header.frame_id = frame_id;
+    color_undistortion_publisher_->publish(std::move(undistorted_image_msg));
+    // Update intrinsic with the new camera matrix from undistortion
+    camera_info.p.at(0) = undistort_result.new_intrinsic.fx;
+    camera_info.p.at(5) = undistort_result.new_intrinsic.fy;
+    camera_info.p.at(2) = undistort_result.new_intrinsic.cx;
+    camera_info.p.at(6) = undistort_result.new_intrinsic.cy;
   }
   if (frame->getType() == OB_FRAME_IR_RIGHT && enable_stream_[INFRA1]) {
     auto stream_profile = frame->getStreamProfile();
@@ -3139,7 +3204,6 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
   if (image_publishers_[stream_index]->get_subscription_count() == 0) {
     return;
   }
-  auto &image = images_[stream_index];
   if (image.empty() || image.cols != width || image.rows != height) {
     image.create(height, width, image_format_[stream_index]);
   }
@@ -3176,19 +3240,6 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
     fps_delay_status_depth_->tick(frame_timestamp);
   }
   image_publishers_[stream_index]->publish(std::move(image_msg));
-  if (stream_index == COLOR && enable_color_undistortion_ &&
-      color_undistortion_publisher_->get_subscription_count() > 0) {
-    auto undistorted_image = undistortImage(image, intrinsic, distortion);
-    sensor_msgs::msg::Image::UniquePtr undistorted_image_msg(new sensor_msgs::msg::Image());
-    cv_bridge::CvImage(std_msgs::msg::Header(), encoding_[stream_index], undistorted_image)
-        .toImageMsg(*undistorted_image_msg);
-    CHECK_NOTNULL(undistorted_image_msg.get());
-    undistorted_image_msg->header.stamp = timestamp;
-    undistorted_image_msg->is_bigendian = false;
-    undistorted_image_msg->step = width * unit_step_size_[stream_index];
-    undistorted_image_msg->header.frame_id = frame_id;
-    color_undistortion_publisher_->publish(std::move(undistorted_image_msg));
-  }
 }
 
 void OBCameraNode::publishMetadata(const std::shared_ptr<ob::Frame> &frame,
@@ -3527,7 +3578,7 @@ void OBCameraNode::calcAndPublishStaticTransform() {
   }
 
   if ((pid == FEMTO_BOLT_PID || pid == FEMTO_MEGA_PID) && enable_stream_[DEPTH] &&
-      enable_stream_[COLOR] && enable_publish_extrinsic_) {
+      enable_stream_[COLOR]) {
     // calc depth to color
 
     CHECK_NOTNULL(stream_profile_[COLOR]);

@@ -199,8 +199,6 @@ void savePointsToPly(const std::shared_ptr<ob::Frame> &frame, const std::string 
 
 tf2::Quaternion rotationMatrixToQuaternion(const float rotation[9]) {
   Eigen::Matrix3f m;
-  // We need to be careful about the order, as RS2 rotation matrix is
-  // column-major, while Eigen::Matrix3f expects row-major.
   m << rotation[0], rotation[1], rotation[2], rotation[3], rotation[4], rotation[5], rotation[6],
       rotation[7], rotation[8];
   Eigen::Quaternionf q(m);
@@ -272,6 +270,7 @@ OBFormat OBFormatFromString(const std::string &format) {
   std::string fixed_format;
   std::transform(format.begin(), format.end(), std::back_inserter(fixed_format),
                  [](const auto ch) { return std::isalpha(ch) ? toupper(ch) : ch; });
+  std::cout << "OBFormatFromString: " << fixed_format << std::endl;
   if (fixed_format == "MJPG") {
     return OB_FORMAT_MJPG;
   } else if (fixed_format == "MJPEG") {
@@ -342,12 +341,41 @@ OBFormat OBFormatFromString(const std::string &format) {
     return OB_FORMAT_RW16;
   } else if (fixed_format == "Y12C4") {
     return OB_FORMAT_Y12C4;
+  } else if (fixed_format == "LIDAR_POINT") {
+    return OB_FORMAT_LIDAR_POINT;
+  } else if (fixed_format == "LIDAR_SPHERE_POINT") {
+    return OB_FORMAT_LIDAR_SPHERE_POINT;
+  } else if (fixed_format == "LIDAR_SCAN") {
+    return OB_FORMAT_LIDAR_SCAN;
+  } else if (fixed_format == "LIDAR_CALIBRATION") {
+    return OB_FORMAT_LIDAR_CALIBRATION;
   }
   //   else if (fixed_format == "DISP16") {
   //     return OB_FORMAT_DISP16;
   //   }
   else {
     return OB_FORMAT_UNKNOWN;
+  }
+}
+
+OBLiDARScanRate OBScanRateFromInt(const int rate) {
+  std::cout << "OBScanRateFromInt: " << rate << std::endl;
+  if (rate == 5) {
+    return OB_LIDAR_SCAN_5HZ;
+  } else if (rate == 10) {
+    return OB_LIDAR_SCAN_10HZ;
+  } else if (rate == 15) {
+    return OB_LIDAR_SCAN_15HZ;
+  } else if (rate == 20) {
+    return OB_LIDAR_SCAN_20HZ;
+  } else if (rate == 25) {
+    return OB_LIDAR_SCAN_25HZ;
+  } else if (rate == 30) {
+    return OB_LIDAR_SCAN_30HZ;
+  } else if (rate == 40) {
+    return OB_LIDAR_SCAN_40HZ;
+  } else {
+    return OB_LIDAR_SCAN_UNKNOWN;
   }
 }
 
@@ -476,7 +504,7 @@ bool isOpenNIDevice(int pid) {
       0x060f, 0x0610, 0x0613, 0x0614, 0x0616, 0x0617, 0x0618, 0x061b, 0x062b, 0x062c, 0x062d,
       0x0632, 0x0633, 0x0634, 0x0635, 0x0636, 0x0637, 0x0638, 0x0639, 0x063a, 0x0650, 0x0651,
       0x0654, 0x0655, 0x0656, 0x0657, 0x0658, 0x0659, 0x065a, 0x065b, 0x065c, 0x065d, 0x0698,
-      0x0699, 0x069a, 0x055c, 0x065e, 0x069a, 0x069f, 0x06a0};
+      0x0699, 0x069a, 0x055c, 0x065e, 0x069a, 0x069f, 0x06a0, 0x069e};
 
   return std::any_of(OPENNI_DEVICE_PIDS.begin(), OPENNI_DEVICE_PIDS.end(),
                      [pid](int pid_openni) { return pid == pid_openni; });
@@ -900,9 +928,9 @@ OBStreamType obStreamTypeFromString(const std::string &stream_type) {
   }
 }
 
-cv::Mat undistortImage(const cv::Mat &image, const OBCameraIntrinsic &intrinsic,
-                       const OBCameraDistortion &distortion) {
-  cv::Mat undistorted_image;
+UndistortedImageResult undistortImage(const cv::Mat &image, const OBCameraIntrinsic &intrinsic,
+                                      const OBCameraDistortion &distortion) {
+  UndistortedImageResult result;
   cv::Mat camera_matrix = cv::Mat::eye(3, 3, CV_64F);
   camera_matrix.at<double>(0, 0) = intrinsic.fx;
   camera_matrix.at<double>(1, 1) = intrinsic.fy;
@@ -912,12 +940,20 @@ cv::Mat undistortImage(const cv::Mat &image, const OBCameraIntrinsic &intrinsic,
   // Create the distortion coefficients matrix using the extended distortion model
   cv::Mat dist_coeffs = (cv::Mat_<float>(8, 1) << distortion.k1, distortion.k2, distortion.p1,
                          distortion.p2, distortion.k3, distortion.k4, distortion.k5, distortion.k6);
-
-  // Undistort the image using OpenCV's undistort function
-  // This function corrects for lens distortion
-  cv::undistort(image, undistorted_image, camera_matrix, dist_coeffs);
-
-  return undistorted_image;
+  cv::Size image_size(image.cols, image.rows);
+  cv::Mat new_camera_matrix =
+      cv::getOptimalNewCameraMatrix(camera_matrix, dist_coeffs, image_size, 0.0, image_size);
+  // Undistort the image using the new camera matrix
+  cv::undistort(image, result.image, camera_matrix, dist_coeffs, new_camera_matrix);
+  // Update the intrinsic parameters with the new camera matrix
+  result.new_intrinsic = intrinsic;  // Copy original values first
+  result.new_intrinsic.fx = new_camera_matrix.at<double>(0, 0);
+  result.new_intrinsic.fy = new_camera_matrix.at<double>(1, 1);
+  result.new_intrinsic.cx = new_camera_matrix.at<double>(0, 2);
+  result.new_intrinsic.cy = new_camera_matrix.at<double>(1, 2);
+  result.new_intrinsic.width = image.cols;
+  result.new_intrinsic.height = image.rows;
+  return result;
 }
 std::string getDistortionModels(OBCameraDistortion distortion) {
   switch (distortion.model) {
@@ -953,4 +989,31 @@ std::string calcMD5(const std::string &data) {
   for (unsigned int i = 0; i < digest_len; ++i) ss << std::setw(2) << (int)digest[i];
   return ss.str();
 }
+double getScanAngleIncrement(OBLiDARScanRate fps) {
+  switch (fps) {
+    case OB_LIDAR_SCAN_15HZ:
+      return deg2rad(0.075);
+    case OB_LIDAR_SCAN_20HZ:
+      return deg2rad(0.1);
+    case OB_LIDAR_SCAN_25HZ:
+      return deg2rad(0.125);
+    case OB_LIDAR_SCAN_30HZ:
+      return deg2rad(0.15);
+    case OB_LIDAR_SCAN_40HZ:
+      return deg2rad(0.2);
+    default:
+      return deg2rad(0.1);
+  }
+}
+
+double deg2rad(double deg) { return deg * M_PI / 180.0; }
+
+double rad2deg(double rad) {
+  double angle_degrees = rad * (180.0 / M_PI);
+  if (angle_degrees < 0) {
+    angle_degrees += 360.0;
+  }
+  return angle_degrees;
+}
+
 }  // namespace orbbec_camera

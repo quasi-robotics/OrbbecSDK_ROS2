@@ -155,6 +155,8 @@ std::string getObSDKVersion();
 
 OBFormat OBFormatFromString(const std::string& format);
 
+OBLiDARScanRate OBScanRateFromInt(const int rate);
+
 std::string OBFormatToString(const OBFormat& format);
 
 std::ostream& operator<<(std::ostream& os, const OBFormat& rhs);
@@ -204,10 +206,20 @@ bool isGemini2R(int pid);
 
 OBStreamType obStreamTypeFromString(const std::string& stream_type);
 
-cv::Mat undistortImage(const cv::Mat& image, const OBCameraIntrinsic& intrinsic,
-                       const OBCameraDistortion& distortion);
+struct UndistortedImageResult {
+  cv::Mat image;
+  OBCameraIntrinsic new_intrinsic;
+};
+
+UndistortedImageResult undistortImage(const cv::Mat& image, const OBCameraIntrinsic& intrinsic,
+                                      const OBCameraDistortion& distortion);
 
 std::string getDistortionModels(OBCameraDistortion distortion);
 
 std::string calcMD5(const std::string& data);
+double getScanAngleIncrement(OBLiDARScanRate fps);
+
+double deg2rad(double deg);
+
+double rad2deg(double rad);
 }  // namespace orbbec_camera

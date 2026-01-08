@@ -1,12 +1,12 @@
-import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.actions import GroupAction
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import ComposableNodeContainer
-from launch_ros.actions import Node
 from launch_ros.actions import PushRosNamespace
+from launch.actions import GroupAction
+from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
+from launch_ros.actions import Node
+import os
 
 
 def generate_launch_description():
@@ -24,12 +24,13 @@ def generate_launch_description():
         DeclareLaunchArgument('cloud_frame_id', default_value=''),
         DeclareLaunchArgument('point_cloud_qos', default_value='default'),
         DeclareLaunchArgument('connection_delay', default_value='100'),
+        DeclareLaunchArgument('diagnostic_period', default_value='0.0'),
         DeclareLaunchArgument('color_width', default_value='640'),
         DeclareLaunchArgument('color_height', default_value='480'),
-        DeclareLaunchArgument('color_fps', default_value='10'),
-        DeclareLaunchArgument('color_format', default_value='RGB'),
+        DeclareLaunchArgument('color_fps', default_value='25'),
+        DeclareLaunchArgument('color_format', default_value='MJPG'),
         DeclareLaunchArgument('enable_color', default_value='true'),
-        DeclareLaunchArgument('color_flip', default_value='false'),
+        DeclareLaunchArgument('flip_color', default_value='false'),
         DeclareLaunchArgument('color_qos', default_value='default'),
         DeclareLaunchArgument('color_camera_info_qos', default_value='default'),
         DeclareLaunchArgument('enable_color_auto_exposure', default_value='true'),
@@ -38,24 +39,27 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_color_auto_white_balance', default_value='true'),
         DeclareLaunchArgument('color_white_balance', default_value='-1'),
         DeclareLaunchArgument('depth_width', default_value='640'),
-        DeclareLaunchArgument('depth_height', default_value='480'),
+        DeclareLaunchArgument('depth_height', default_value='400'),
         DeclareLaunchArgument('depth_fps', default_value='10'),
-        DeclareLaunchArgument('depth_format', default_value='Y11'),
+        DeclareLaunchArgument('depth_format', default_value='Y12'),
         DeclareLaunchArgument('enable_depth', default_value='true'),
-        DeclareLaunchArgument('depth_flip', default_value='false'),
+        DeclareLaunchArgument('flip_depth', default_value='false'),
         DeclareLaunchArgument('depth_qos', default_value='default'),
         DeclareLaunchArgument('depth_camera_info_qos', default_value='default'),
+        # /config/depthfilter/Openni_device.json，need config path.
+        DeclareLaunchArgument('depth_filter_config', default_value=''),
         DeclareLaunchArgument('ir_width', default_value='640'),
-        DeclareLaunchArgument('ir_height', default_value='480'),
+        DeclareLaunchArgument('ir_height', default_value='400'),
         DeclareLaunchArgument('ir_fps', default_value='10'),
         DeclareLaunchArgument('ir_format', default_value='Y10'),
-        DeclareLaunchArgument('enable_ir', default_value='false'),
-        DeclareLaunchArgument('ir_flip', default_value='false'),
+        DeclareLaunchArgument('enable_ir', default_value='true'),
+        DeclareLaunchArgument('flip_ir', default_value='false'),
         DeclareLaunchArgument('ir_qos', default_value='default'),
         DeclareLaunchArgument('ir_camera_info_qos', default_value='default'),
         DeclareLaunchArgument('enable_ir_auto_exposure', default_value='true'),
         DeclareLaunchArgument('ir_exposure', default_value='-1'),
         DeclareLaunchArgument('ir_gain', default_value='-1'),
+        DeclareLaunchArgument('enable_ir_long_exposure', default_value='false'),
         DeclareLaunchArgument('publish_tf', default_value='true'),
         DeclareLaunchArgument('tf_publish_rate', default_value='0.0'),
         DeclareLaunchArgument('ir_info_url', default_value=''),
@@ -64,42 +68,14 @@ def generate_launch_description():
         DeclareLaunchArgument('log_file_name', default_value=''),
         DeclareLaunchArgument('enable_publish_extrinsic', default_value='false'),
         DeclareLaunchArgument('enable_d2c_viewer', default_value='false'),
-        DeclareLaunchArgument('enable_ldp', default_value='true'),
-        DeclareLaunchArgument('ordered_pc', default_value='false'),
+        DeclareLaunchArgument('enable_soft_filter', default_value='true'),
+        DeclareLaunchArgument('enable_soft_filter', default_value='true'),
+        DeclareLaunchArgument('soft_filter_max_diff', default_value='-1'),
+        DeclareLaunchArgument('soft_filter_speckle_size', default_value='-1'),
         DeclareLaunchArgument('use_hardware_time', default_value='false'),
-        DeclareLaunchArgument('enable_depth_scale', default_value='true'),
         DeclareLaunchArgument('align_mode', default_value='HW'),
         DeclareLaunchArgument('laser_energy_level', default_value='-1'),
         DeclareLaunchArgument('enable_heartbeat', default_value='false'),
-
-        DeclareLaunchArgument('color_mirror', default_value='false'),
-        DeclareLaunchArgument('color_rotation', default_value='-1'),
-        DeclareLaunchArgument('depth_mirror', default_value='false'),
-        DeclareLaunchArgument('depth_exposure', default_value='-1'),
-        DeclareLaunchArgument('depth_gain', default_value='-1'),
-        DeclareLaunchArgument('depth_qos', default_value='default'),
-        DeclareLaunchArgument('depth_camera_info_qos', default_value='default'),
-        DeclareLaunchArgument('ir_mirror', default_value='false'),
-        DeclareLaunchArgument('ir_rotation', default_value='-1'),   # depth rotation degree : 0, 90, 180, 270
-        # enable laser
-        DeclareLaunchArgument('enable_laser', default_value='true'),
-        # filter switch
-        DeclareLaunchArgument('enable_noise_removal_filter', default_value='true'),
-        DeclareLaunchArgument('noise_removal_filter_min_diff', default_value='256'),
-        DeclareLaunchArgument('noise_removal_filter_max_size', default_value='80'),
-        DeclareLaunchArgument('enable_threshold_filter', default_value='false'),
-        DeclareLaunchArgument('threshold_filter_max', default_value='-1'),
-        DeclareLaunchArgument('threshold_filter_min', default_value='-1'),
-        DeclareLaunchArgument('enable_spatial_filter', default_value='false'),
-        DeclareLaunchArgument('spatial_filter_alpha', default_value='-1.0'),
-        DeclareLaunchArgument('spatial_filter_diff_threshold', default_value='-1'),
-        DeclareLaunchArgument('spatial_filter_magnitude', default_value='-1'),
-        DeclareLaunchArgument('spatial_filter_radius', default_value='-1'),
-        DeclareLaunchArgument('enable_temporal_filter', default_value='false'),
-        DeclareLaunchArgument('temporal_filter_diff_threshold', default_value='-1.0'),
-        DeclareLaunchArgument('temporal_filter_weight', default_value='-1.0'),
-        DeclareLaunchArgument('enable_hole_filling_filter', default_value='false'),
-        DeclareLaunchArgument('hole_filling_filter_mode', default_value=''),
     ]
 
     # Node configuration

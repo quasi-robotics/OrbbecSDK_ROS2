@@ -21,6 +21,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <semaphore.h>
 #include "ob_camera_node.h"
+#include "ob_lidar_node.h"
 #include "utils.h"
 #include "dynamic_params.h"
 #include <orbbec_camera_msgs/msg/device_status.hpp>
@@ -84,12 +85,18 @@ class OBCameraNodeDriver : public rclcpp::Node {
 
   bool applyForceIpConfig();
 
+  OBDeviceAccessMode stringToAccessMode(const std::string& mode_str);
+  std::string accessModeToString(OBDeviceAccessMode mode);
+
  private:
   const rclcpp::NodeOptions node_options_;
   std::string config_path_;
   std::unique_ptr<ob::Context> ctx_ = nullptr;
   rclcpp::Logger logger_;
+  OBCallbackId device_changed_callback_id_ =
+      INVALID_CALLBACK_ID;  // Store callback ID for unregistering
   std::unique_ptr<OBCameraNode> ob_camera_node_ = nullptr;
+  std::unique_ptr<orbbec_lidar::OBLidarNode> ob_lidar_node_ = nullptr;
   std::shared_ptr<ob::Device> device_ = nullptr;
   std::shared_ptr<ob::DeviceInfo> device_info_ = nullptr;
   std::atomic_bool is_alive_{false};
@@ -98,6 +105,8 @@ class OBCameraNodeDriver : public rclcpp::Node {
   std::string serial_number_;
   std::string device_unique_id_;
   std::string usb_port_;
+  std::string device_access_mode_str_;
+  OBDeviceAccessMode device_access_mode_ = OB_DEVICE_DEFAULT_ACCESS;
   bool enumerate_net_device_ = false;  // default false
   std::string uvc_backend_;
   std::shared_ptr<Parameters> parameters_ = nullptr;
@@ -129,6 +138,8 @@ class OBCameraNodeDriver : public rclcpp::Node {
   static backward::SignalHandling sh;  // for stack trace
   std::string upgrade_firmware_;
   std::atomic<bool> firmware_update_success_{false};
+  std::atomic<bool> need_reupdate_{false};
+  std::atomic<bool> is_reupdating_{false};  // Flag to track if we're in reupdate process
   rclcpp::TimerBase::SharedPtr device_status_timer_ = nullptr;
   int device_status_interval_hz = 2;  // 2Hz
   rclcpp::Publisher<orbbec_camera_msgs::msg::DeviceStatus>::SharedPtr device_status_pub_ = nullptr;
@@ -140,5 +151,6 @@ class OBCameraNodeDriver : public rclcpp::Node {
   std::string force_ip_subnet_mask_;  // e.g. "255.255.255.0"
   std::string force_ip_gateway_;      // e.g. "192.168.1.1"
   std::atomic<bool> force_ip_success_{false};
+  std::string device_type_;
 };
 }  // namespace orbbec_camera

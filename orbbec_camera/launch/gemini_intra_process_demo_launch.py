@@ -111,6 +111,7 @@ def generate_launch_description():
         DeclareLaunchArgument('ir_info_url', default_value=''),
         DeclareLaunchArgument('color_info_url', default_value=''),
         DeclareLaunchArgument('log_level', default_value='none'),
+        DeclareLaunchArgument('log_file_name', default_value=''),
         DeclareLaunchArgument('enable_publish_extrinsic', default_value='false'),
         DeclareLaunchArgument('enable_d2c_viewer', default_value='false'),
         DeclareLaunchArgument('disparity_to_depth_mode', default_value='HW'),
@@ -168,6 +169,9 @@ def generate_launch_description():
         DeclareLaunchArgument('use_intra_process_comms', default_value='true'),
         DeclareLaunchArgument('gmsl_trigger_fps', default_value='3000'),
         DeclareLaunchArgument('enable_gmsl_trigger', default_value='false'),
+        DeclareLaunchArgument('enumerate_net_device', default_value='true'),
+        DeclareLaunchArgument('net_device_ip', default_value=''),
+        DeclareLaunchArgument('net_device_port', default_value='0'),
     ]
 
     def get_params(context, args):
