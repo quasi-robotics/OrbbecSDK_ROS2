@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction, ExecuteProcess, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
@@ -38,8 +38,8 @@ def generate_launch_description():
 
     # Launch description
     ld = LaunchDescription([
-        GroupAction([launch1_include]),
-        GroupAction([launch2_include]),
+            TimerAction(period=0.0, actions=[GroupAction([launch2_include])]),
+            TimerAction(period=2.0, actions=[GroupAction([launch1_include])]),
     ])
 
     return ld

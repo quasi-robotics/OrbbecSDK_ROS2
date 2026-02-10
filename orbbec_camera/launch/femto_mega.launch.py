@@ -140,7 +140,7 @@ def generate_launch_description():
                     name="ob_camera_node",
                     namespace=LaunchConfiguration("camera_name"),
                     parameters=parameters,
-                    output="screen",
+                    output="log",
                 )
             ]
         )
@@ -163,7 +163,7 @@ def generate_launch_description():
             composable_node_descriptions=[
                 compose_node,
             ],
-            output="screen",
+            output="log",
         )
         # Launch description
         ld = LaunchDescription(

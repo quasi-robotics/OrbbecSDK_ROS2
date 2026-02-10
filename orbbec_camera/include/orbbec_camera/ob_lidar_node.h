@@ -65,7 +65,6 @@
 #include "orbbec_camera/d2c_viewer.h"
 #include "magic_enum/magic_enum.hpp"
 #include "orbbec_camera/image_publisher.h"
-#include "jpeg_decoder.h"
 #include <std_msgs/msg/string.hpp>
 #include <fcntl.h>
 #include <unistd.h>

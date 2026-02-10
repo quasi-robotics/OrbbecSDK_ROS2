@@ -209,7 +209,7 @@ def generate_launch_description():
                                 extra_arguments=[{'use_intra_process_comms': True}],
                             ),
                         ],
-                        output="screen",
+                        output="log",
                         #prefix=['xterm -e gdb -ex run --args'],
                     )
                 ])

@@ -114,7 +114,7 @@ def generate_launch_description():
         # Unbinned Sparse Default
         # Binned Sparse Default
         # Obstacle Avoidance
-        DeclareLaunchArgument("depth_work_mode", default_value=""),
+        DeclareLaunchArgument("depth_work_mode", default_value="Unbinned Dense Default"),
         DeclareLaunchArgument("sync_mode", default_value="standalone"),
         DeclareLaunchArgument("depth_delay_us", default_value="0"),
         DeclareLaunchArgument("color_delay_us", default_value="0"),
@@ -145,7 +145,7 @@ def generate_launch_description():
                     name="ob_camera_node",
                     namespace=LaunchConfiguration("camera_name"),
                     parameters=parameters,
-                    output="screen",
+                    output="log",
                 )
             ]
         )
@@ -168,7 +168,7 @@ def generate_launch_description():
             composable_node_descriptions=[
                 compose_node,
             ],
-            output="screen",
+            output="log",
         )
         # Launch description
         ld = LaunchDescription(

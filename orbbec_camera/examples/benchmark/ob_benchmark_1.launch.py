@@ -62,7 +62,7 @@ def generate_launch_description():
         name=component_container_name_arg,
         package="rclcpp_components",
         executable="component_container_mt",
-        output="screen",
+        output="log",
         condition=UnlessCondition(attach_to_shared_component_container_arg),
     )
     start_benchmark = LoadComposableNodes(

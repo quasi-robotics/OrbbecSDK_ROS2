@@ -25,6 +25,23 @@ OrbbecSDK ROS2 Wrapper 提供 Orbbec 相机与 ROS 2 环境的无缝集成，支
   </thead>
   <tbody>
       <tr>
+      <td rowspan="1" style="text-align: center; font-weight: bold;">Gemini 305</td>
+      <td>Gemini 305</td>
+      <td>not supported</td>
+      <td>recommended for new designs</td>
+    </tr>
+      <tr>
+      <td rowspan="2" style="text-align: center; font-weight: bold;">Gemini 340</td>
+      <td>Gemini 345</td>
+      <td>not supported</td>
+      <td>recommended for new designs</td>
+    </tr>
+    <tr>
+      <td>Gemini 345Lg</td>
+      <td>not supported</td>
+      <td>recommended for new designs</td>
+    </tr>
+      <tr>
       <td style="text-align: center; font-weight: bold;">Gemini 435Le</td>
       <td>Gemini 435Le</td>
       <td>not supported</td>
@@ -166,7 +183,7 @@ OrbbecSDK ROS2 Wrapper 提供 Orbbec 相机与 ROS 2 环境的无缝集成，支
 
 **迁移指南**
 
-如果您需要将现有项目从 main (v1.x) 分支迁移到 v2-main (v2.x) 分支，请参考官方[迁移指南](https://orbbec.github.io/OrbbecSDK_ROS2/zh/source/7_developer_guide/migration_guide.html)
+如果您需要将现有项目从 main (v1.x) 分支迁移到 v2-main (v2.x) 分支，请参考官方[迁移指南](https://orbbec.github.io/OrbbecSDK_ROS2/zh/source/camera_devices/7_developer_guide/migration_guide.html)
 
 ## 安装说明
 
@@ -183,7 +200,7 @@ sudo apt install libgflags-dev nlohmann-json3-dev \
 ros-$ROS_DISTRO-image-transport ros-${ROS_DISTRO}-image-transport-plugins ros-${ROS_DISTRO}-compressed-image-transport \
 ros-$ROS_DISTRO-image-publisher ros-$ROS_DISTRO-camera-info-manager \
 ros-$ROS_DISTRO-diagnostic-updater ros-$ROS_DISTRO-diagnostic-msgs ros-$ROS_DISTRO-statistics-msgs ros-$ROS_DISTRO-xacro \
-ros-$ROS_DISTRO-backward-ros libdw-dev libssl-dev mesa-utils libgl1
+ros-$ROS_DISTRO-backward-ros libdw-dev libssl-dev mesa-utils libgl1 libgoogle-glog-dev
 ```
 
 启用 ROS 2 自动补全：
@@ -297,7 +314,7 @@ ros2 topic echo /camera/depth/camera_info
 ros2 service call /camera/get_sdk_version orbbec_camera_msgs/srv/GetString '{}'
 ```
 
-更多使用详情，请参考官方 [OrbbecSDK ROS2 文档](https://orbbec.github.io/OrbbecSDK_ROS2/zh/source/4_application_guide/application_guide.html)
+更多使用详情，请参考官方 [OrbbecSDK ROS2 文档](https://orbbec.github.io/OrbbecSDK_ROS2/zh/source/camera_devices/4_application_guide/application_guide.html)
 
 ## 支持的设备
 
@@ -306,19 +323,22 @@ ros2 service call /camera/get_sdk_version orbbec_camera_msgs/srv/GetString '{}'
 为获得最佳性能，强烈建议更新至最新固件版本，以确保您能获得最新的改进和 bug 修复。
 
 | **产品列表** | **推荐固件版本**                                                             |  **启动文件**                                          |
-| ----------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Astra Mini Pro           | [2.0.03](https://github.com/orbbec/OrbbecFirmware/releases/tag/Astra-Mini-Pro)             |                                               astra.launch.py   |
-| Astra Mini S Pro            | [2.0.03](https://github.com/orbbec/OrbbecFirmware/releases/tag/Astra-Mini-S-Pro)             |                                               astra.launch.py   |
-| Gemini 435Le            | [1.3.6](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemin435Le-Firmware)             |                                               gemini435_le.launch.py   |
+| ----------------------- | -------------------------------------------------------------------------------------------- | --------------------------- |
+| Gemini 305              | [1.0.30](https://doc.orbbec.com/documentation/Gemini%20305%20Series%20Documentation/Firmware%20Release%20of%20Gemini%20305)                  | gemini305.launch.py             |
+| Astra Mini Pro          | [2.0.03](https://github.com/orbbec/OrbbecFirmware/releases/tag/Astra-Mini-Pro)                  | astra.launch.py             |
+| Astra Mini S Pro        | [2.0.03](https://github.com/orbbec/OrbbecFirmware/releases/tag/Astra-Mini-S-Pro)                | astra.launch.py             |
+| Gemini 435Le            | [1.3.6](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemin435Le-Firmware)              | gemini435_le.launch.py      |
 | Gemini 330 series       | [1.6.00](https://orbbec-debian-repos-aws.s3.amazonaws.com/product/Gemini330_Release_1.6.00.zip) | gemini_330_series.launch.py |
-| Gemini 215              | [1.0.9](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini215-Firmware)               |                                               gemini210.launch.py   |
-| Gemini 210              | [1.0.9](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini210-Firmware)               |                                               gemini210.launch.py    |
-| Gemini 2                | [1.4.98](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini2-Firmware)                |                                               gemini2.launch.py     |
-| Gemini 2 L              | [1.5.2](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini2L-Firmware)                |                                               gemini2L.launch.py  |
-| Femto Bolt              | [1.1.2](https://github.com/orbbec/OrbbecFirmware/releases/tag/Femto-Bolt-Firmware)              |                               femto_bolt.launch.py |
-| Femto Mega              | [1.3.1](https://github.com/orbbec/OrbbecFirmware/releases/tag/Femto-Mega-Firmware)              |                                               femto_mega.launch.py  |
-| Femto Mega I             | [2.0.4](https://github.com/orbbec/OrbbecFirmware/releases/tag/Femto-Mega-I-Firmware)              |                                               femto_mega.launch.py  |
-| Astra 2                 | [2.8.20](https://orbbec-debian-repos-aws.s3.amazonaws.com/product/Astra2_Release_2.8.20.zip)    |                                               astra2.launch.py    |
+| Gemini 215              | [1.0.9](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini215-Firmware)               | gemini210.launch.py         |
+| Gemini 210              | [1.0.9](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini210-Firmware)               | gemini210.launch.py         |
+| Gemini 2                | [1.4.98](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini2-Firmware)                | gemini2.launch.py           |
+| Gemini 2 L              | [1.5.2](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini2L-Firmware)                | gemini2L.launch.py          |
+| Femto Bolt              | [1.1.2](https://github.com/orbbec/OrbbecFirmware/releases/tag/Femto-Bolt-Firmware)              | femto_bolt.launch.py        |
+| Femto Mega              | [1.3.1](https://github.com/orbbec/OrbbecFirmware/releases/tag/Femto-Mega-Firmware)              | femto_mega.launch.py        |
+| Femto Mega I            | [2.0.4](https://github.com/orbbec/OrbbecFirmware/releases/tag/Femto-Mega-I-Firmware)            | femto_mega.launch.py        |
+| Astra 2                 | [2.8.20](https://orbbec-debian-repos-aws.s3.amazonaws.com/product/Astra2_Release_2.8.20.zip)    | astra2.launch.py            |
+| Gemini 345            | 1.7.12 | gemini345.launch.py |
+| Gemini 345Lg            | 1.7.12 | gemini345_lg.launch.py |
 | Pulsar SL450            | 2.2.4.5 | lidar.launch.py |
 | Pulsar ME450            | 1.0.0.6 | lidar.launch.py |
 
@@ -326,7 +346,7 @@ ros2 service call /camera/get_sdk_version orbbec_camera_msgs/srv/GetString '{}'
 
 ## 教程
 
-请参考官方 [OrbbecSDK ROS2 文档](https://orbbec.github.io/OrbbecSDK_ROS2/zh/source/5_advanced_guide/advanced_guide.html)
+请参考官方 [OrbbecSDK ROS2 文档](https://orbbec.github.io/OrbbecSDK_ROS2/zh/source/camera_devices/5_advanced_guide/advanced_guide.html)
 
 ## 示例
 

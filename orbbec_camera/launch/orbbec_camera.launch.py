@@ -162,7 +162,7 @@ def generate_launch_description():
                     name="ob_camera_node",
                     namespace=camera_name,
                     parameters=params,
-                    output="screen",
+                    output="log",
                     #condition=UnlessCondition(attach_enable_condition)
                     #prefix=['xterm -e gdb -ex run --args'],
                 ),

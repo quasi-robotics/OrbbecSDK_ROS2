@@ -6,7 +6,8 @@ name: common_benchmark_node.py
 function: A ROS2 node to monitor and log the performance of an Orbbec camera node:
           frame rates, delays, CPU and RAM usage, packet/frame loss statistics.
 usage:
-  ros2 run orbbec_camera common_benchmark_node.py --run_time 20 --csv_file /tmp/cam_log.csv
+    ros2 run orbbec_camera common_benchmark_node.py --run_time 20 --csv_file /tmp/cam_log.csv
+                    You can also pass an ideal frame rate for drop detection: --ideal_fps 30
 """
 
 import argparse
@@ -93,7 +94,7 @@ class TopicTracker:
 
 
 class CameraMonitorNode(Node):
-    def __init__(self, run_time, csv_file="camera_monitor_log.csv"):
+    def __init__(self, run_time, csv_file="camera_monitor_log.csv", ideal_fps: float = 0.0):
         super().__init__("camera_monitor_node")
 
         self.run_time = run_time
@@ -101,7 +102,8 @@ class CameraMonitorNode(Node):
         self.process = psutil.Process(os.getpid())
         self.first_data_collected = False
         self.node_name = ""
-
+        # If > 0, use this ideal fps value for drop-frame detection instead of the reported average
+        self.ideal_fps = float(ideal_fps) if ideal_fps is not None else 0.0
         self.connection_type = None
         self.disconnect_count = 0
         self.prev_online = True
@@ -218,7 +220,9 @@ class CameraMonitorNode(Node):
             return
         header = msg.header
         tracker = self.trackers[stream]
-        tracker.on_msg(header, self.stats[f"{stream}_fps"]["avg"])
+        # Prefer a user-specified ideal fps for drop detection when provided.
+        fps_to_use = self.ideal_fps if (self.ideal_fps and self.ideal_fps > 0.0) else self.stats[f"{stream}_fps"]["avg"]
+        tracker.on_msg(header, fps_to_use)
 
     def update_stats(self, key, cur, min_val, max_val, avg_val):
         if min_val <= 1e-3 or avg_val < 0:  # ignore invalid data
@@ -324,11 +328,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_time", type=str, default="10s", help="Total run time for monitoring, e.g., 10s, 5m, 1h.")
     parser.add_argument("--csv_file", type=str, default="camera_monitor_log.csv")
+    parser.add_argument("--ideal_fps", type=float, default=0.0, help="Optional ideal frame rate to use for drop detection (overrides reported avg).")
     cli_args, _ = parser.parse_known_args(argv)
 
     rclpy.init(args=argv)
     run_time = parse_duration(cli_args.run_time)
-    node = CameraMonitorNode(run_time, cli_args.csv_file)
+    node = CameraMonitorNode(run_time, cli_args.csv_file, ideal_fps=cli_args.ideal_fps)
 
     try:
         rclpy.spin(node)

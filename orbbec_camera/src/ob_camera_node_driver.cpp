@@ -26,6 +26,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <filesystem>
+#include <atomic>
 
 #include <fstream>
 #include <iomanip>  // For std::put_time
@@ -35,6 +36,13 @@ std::string g_camera_name = "orbbec_camera";  // Assuming this is declared elsew
 std::string g_time_domain = "global";         // Assuming this is declared elsewhere
 
 void signalHandler(int sig) {
+  // Prevent recursive signal handling
+  static std::atomic<bool> in_signal_handler{false};
+  if (in_signal_handler.exchange(true)) {
+    // Already in signal handler, force exit immediately
+    _exit(sig);
+  }
+
   std::cout << "Received signal: " << sig << std::endl;
   if (sig == SIGINT || sig == SIGTERM) {
     static int signal_count = 0;
@@ -47,8 +55,9 @@ void signalHandler(int sig) {
     } else if (signal_count >= 5) {
       // Force exit after second signal
       std::cout << "Force exit due to multiple signals" << std::endl;
-      exit(sig);
+      _exit(sig);
     }
+    in_signal_handler.store(false);
   } else {
     std::string log_dir = "Log/";
 
@@ -81,7 +90,7 @@ void signalHandler(int sig) {
     }
 
     log_file.close();
-    exit(sig);  // Exit program
+    _exit(sig);  // Use _exit instead of exit to avoid cleanup that may crash
   }
 }
 
@@ -1305,6 +1314,10 @@ void OBCameraNodeDriver::startDevice(const std::shared_ptr<ob::DeviceList> &list
     auto pid = device->getDeviceInfo()->getPid();
     if (GEMINI_335LG_PID == pid) {
       ob_camera_node_->startGmslTrigger();
+    }
+    if (pid == GEMINI_305_PID) {
+      // Fixing 305 hot-swap not outputting power
+      ob_camera_node_->startStreams();
     }
   } catch (ob::Error &e) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to initialize device " << e.getMessage());

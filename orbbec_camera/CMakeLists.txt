@@ -51,6 +51,7 @@ foreach(dep IN LISTS dependencies)
 endforeach()
 
 find_package(PkgConfig REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 if(USE_RK_HW_DECODER)
     pkg_search_module(RK_MPP REQUIRED rockchip_mpp)

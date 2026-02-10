@@ -25,12 +25,6 @@
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "libobsensor/hpp/Utils.hpp"
 
-#if defined(USE_RK_HW_DECODER)
-#include "orbbec_camera/rk_mpp_decoder.h"
-#elif defined(USE_NV_HW_DECODER)
-#include "orbbec_camera/jetson_nv_decoder.h"
-#endif
-
 namespace orbbec_camera {
 namespace orbbec_lidar {
 using namespace std::chrono_literals;
@@ -49,11 +43,6 @@ OBLidarNode::OBLidarNode(rclcpp::Node *node, std::shared_ptr<ob::Device> device,
   stream_name_[ACCEL] = "accel";
   stream_name_[GYRO] = "gyro";
   setupTopics();
-#if defined(USE_RK_HW_DECODER)
-  jpeg_decoder_ = std::make_unique<RKJPEGDecoder>(width_[COLOR], height_[COLOR]);
-#elif defined(USE_NV_HW_DECODER)
-  jpeg_decoder_ = std::make_unique<JetsonNvJPEGDecoder>(width_[COLOR], height_[COLOR]);
-#endif
   is_camera_node_initialized_ = true;
 }
 
