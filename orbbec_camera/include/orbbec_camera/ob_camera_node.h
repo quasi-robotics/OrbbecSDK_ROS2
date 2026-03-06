@@ -671,6 +671,7 @@ class OBCameraNode {
   int color_hue_ = -1;
   int color_backlight_compensation_ = -1;
   std::string color_powerline_freq_;
+  std::string color_preset_;
   int color_denoising_level_ = -1;
   bool enable_color_decimation_filter_ = false;
   int color_decimation_filter_scale_ = -1;
@@ -775,6 +776,8 @@ class OBCameraNode {
   bool enable_hole_filling_filter_ = false;
   bool enable_spatial_fast_filter_ = false;
   bool enable_spatial_moderate_filter_ = false;
+  bool enable_false_positive_filter_ = false;
+
   // filter params
   int decimation_filter_scale_ = -1;
   int sequence_id_filter_id_ = -1;
@@ -834,6 +837,9 @@ class OBCameraNode {
   // soft ware trigger
   rclcpp::TimerBase::SharedPtr software_trigger_timer_;
   rclcpp::TimerBase::SharedPtr diagnostic_timer_;
+  std::mutex diagnostic_mutex_;
+  std::condition_variable diagnostic_cv_;
+  bool diagnostic_running_ = false;
   std::chrono::milliseconds software_trigger_period_{33};
   bool enable_heartbeat_ = false;
   bool enable_color_undistortion_ = false;

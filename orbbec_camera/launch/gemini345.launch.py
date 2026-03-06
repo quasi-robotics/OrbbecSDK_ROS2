@@ -74,6 +74,7 @@ def generate_launch_description():
         DeclareLaunchArgument('usb_port', default_value=''),
         DeclareLaunchArgument('device_num', default_value='1'),
         DeclareLaunchArgument('upgrade_firmware', default_value=''),
+        DeclareLaunchArgument('preset_firmware_path', default_value=''),
         DeclareLaunchArgument('load_config_json_file_path', default_value=''),
         DeclareLaunchArgument('export_config_json_file_path', default_value=''),
         DeclareLaunchArgument('uvc_backend', default_value='libuvc'),#libuvc or v4l2
@@ -177,6 +178,7 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_temporal_filter', default_value='false'),
         DeclareLaunchArgument('enable_disparity_to_depth', default_value='true'),
         DeclareLaunchArgument('enable_hole_filling_filter', default_value='false'),
+        DeclareLaunchArgument('enable_false_positive_filter', default_value='false'),
         DeclareLaunchArgument('decimation_filter_scale', default_value='-1'),
         DeclareLaunchArgument('sequence_id_filter_id', default_value='-1'),
         DeclareLaunchArgument('threshold_filter_max', default_value='-1'),

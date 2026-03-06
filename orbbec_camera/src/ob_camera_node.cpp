@@ -169,7 +169,11 @@ void OBCameraNode::clean() noexcept {
     if (diagnostic_timer_) {
       diagnostic_timer_->cancel();
       // Wait for any currently executing timer callbacks to complete
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      {
+        std::unique_lock<std::mutex> lk(diagnostic_mutex_);
+        diagnostic_cv_.wait_for(lk, std::chrono::milliseconds(100),
+                                [this]() { return !diagnostic_running_; });
+      }
       diagnostic_timer_.reset();
     }
     if (software_trigger_timer_) {
@@ -260,7 +264,15 @@ void OBCameraNode::clean() noexcept {
 }
 
 void OBCameraNode::setupDevices() {
-  if (!device_preset_.empty()) {
+  if (!depth_work_mode_.empty() &&
+      device_->isPropertySupported(OB_STRUCT_CURRENT_DEPTH_ALG_MODE, OB_PERMISSION_READ_WRITE)) {
+    auto depthModeList = device_->getDepthWorkModeList();
+    for (uint32_t i = 0; i < depthModeList->getCount(); i++) {
+      RCLCPP_INFO_STREAM(logger_, "depthModeList[" << i << "]: " << (*depthModeList)[i].name);
+    }
+    TRY_EXECUTE_BLOCK(device_->switchDepthWorkMode(depth_work_mode_.c_str()));
+    RCLCPP_INFO_STREAM(logger_, "Set device preset: " << depth_work_mode_);
+  } else if (!device_preset_.empty()) {
     try {
       RCLCPP_INFO_STREAM(logger_, "Available presets:");
       auto preset_list = device_->getAvailablePresetList();
@@ -431,32 +443,6 @@ void OBCameraNode::setupDevices() {
     RCLCPP_INFO_STREAM(logger_, "Setting laser control to " << enable_laser_);
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_LASER_BOOL, enable_laser_);
   }
-  if (!depth_work_mode_.empty() &&
-      device_->isPropertySupported(OB_STRUCT_CURRENT_DEPTH_ALG_MODE, OB_PERMISSION_READ_WRITE)) {
-    auto depthModeList = device_->getDepthWorkModeList();
-    for (uint32_t i = 0; i < depthModeList->getCount(); i++) {
-      RCLCPP_INFO_STREAM(logger_, "depthModeList[" << i << "]: " << (*depthModeList)[i].name);
-    }
-    TRY_EXECUTE_BLOCK(device_->switchDepthWorkMode(depth_work_mode_.c_str()));
-    RCLCPP_INFO_STREAM(logger_, "Set device preset: " << depth_work_mode_);
-  } else if (!device_preset_.empty()) {
-    try {
-      RCLCPP_INFO_STREAM(logger_, "Available presets:");
-      auto preset_list = device_->getAvailablePresetList();
-      for (uint32_t i = 0; i < preset_list->getCount(); i++) {
-        RCLCPP_INFO_STREAM(logger_, "Preset " << i << ": " << preset_list->getName(i));
-      }
-      RCLCPP_INFO_STREAM(logger_, "Load device preset: " << device_preset_);
-      TRY_EXECUTE_BLOCK(device_->loadPreset(device_preset_.c_str()));
-      RCLCPP_INFO_STREAM(logger_, "Device preset " << device_->getCurrentPresetName() << " loaded");
-    } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_, "Failed to load device preset: " << e.getMessage());
-    } catch (const std::exception &e) {
-      RCLCPP_ERROR_STREAM(logger_, "Failed to load device preset: " << e.what());
-    } catch (...) {
-      RCLCPP_ERROR_STREAM(logger_, "Failed to load device preset");
-    }
-  }
   if (!sync_mode_str_.empty()) {
     auto sync_config = device_->getMultiDeviceSyncConfig();
     RCLCPP_INFO_STREAM(logger_,
@@ -595,6 +581,25 @@ void OBCameraNode::setupDevices() {
                                     << (enable_color_auto_white_balance_ ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_COLOR_AUTO_WHITE_BALANCE_BOOL,
                         enable_color_auto_white_balance_);
+  }
+  if (!color_preset_.empty() &&
+      device_->isPropertySupported(OB_PROP_COLOR_PRESET_PRIORITY_INT, OB_PERMISSION_WRITE)) {
+    std::string preset_key = color_preset_;
+    std::transform(preset_key.begin(), preset_key.end(), preset_key.begin(), ::tolower);
+    int preset_value = -1;
+    if (preset_key == "default") {
+      preset_value = 0;
+    } else if (preset_key == "warm biased awb") {
+      preset_value = 1;
+    } else {
+      RCLCPP_WARN_STREAM(
+          logger_, "Unsupported color_preset: " << color_preset_
+                                                << ". Supported values: Default, Warm Biased AWB");
+    }
+    if (preset_value >= 0) {
+      RCLCPP_INFO_STREAM(logger_, "Setting color preset to " << color_preset_);
+      TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_PRESET_PRIORITY_INT, preset_value);
+    }
   }
   if (color_exposure_ != -1 &&
       device_->isPropertySupported(OB_PROP_COLOR_EXPOSURE_INT, OB_PERMISSION_WRITE)) {
@@ -1220,6 +1225,7 @@ void OBCameraNode::setupDepthPostProcessFilter() {
         {"ThresholdFilter", enable_threshold_filter_},
         {"SpatialFastFilter", enable_spatial_fast_filter_},
         {"SpatialModerateFilter", enable_spatial_moderate_filter_},
+        {"FalsePositiveFilter", enable_false_positive_filter_},
     };
     std::string filter_name = filter->type();
     RCLCPP_INFO_STREAM(logger_, "Setting " << filter_name << "......");
@@ -2066,6 +2072,7 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<int>(color_backlight_compensation_, "color_backlight_compensation", -1);
   setAndGetNodeParameter<int>(color_denoising_level_, "color_denoising_level", -1);
   setAndGetNodeParameter<std::string>(color_powerline_freq_, "color_powerline_freq", "");
+  setAndGetNodeParameter<std::string>(color_preset_, "color_preset", "Default");
   setAndGetNodeParameter<bool>(enable_color_decimation_filter_, "enable_color_decimation_filter",
                                false);
   setAndGetNodeParameter<int>(color_decimation_filter_scale_, "color_decimation_filter_scale", -1);
@@ -2165,6 +2172,8 @@ void OBCameraNode::getParameters() {
                                 -1.0);
   setAndGetNodeParameter<float>(temporal_filter_weight_, "temporal_filter_weight", -1.0);
   setAndGetNodeParameter<std::string>(hole_filling_filter_mode_, "hole_filling_filter_mode", "");
+  setAndGetNodeParameter<bool>(enable_false_positive_filter_, "enable_false_positive_filter",
+                               false);
   setAndGetNodeParameter<int>(hdr_merge_exposure_1_, "hdr_merge_exposure_1", -1);
   setAndGetNodeParameter<int>(hdr_merge_gain_1_, "hdr_merge_gain_1", -1);
   setAndGetNodeParameter<int>(hdr_merge_exposure_2_, "hdr_merge_exposure_2", -1);
@@ -2421,8 +2430,24 @@ void OBCameraNode::setupDiagnosticUpdater() {
               // Device is busy or shutting down, skip this update
               return;
             }
-
-            diagnostic_updater_->force_update();
+            // Mark diagnostic as running to prevent concurrent reset/publish races
+            {
+              std::lock_guard<std::mutex> lk(diagnostic_mutex_);
+              diagnostic_running_ = true;
+            }
+            try {
+              diagnostic_updater_->force_update();
+            } catch (...) {
+              std::lock_guard<std::mutex> lk(diagnostic_mutex_);
+              diagnostic_running_ = false;
+              diagnostic_cv_.notify_all();
+              throw;
+            }
+            {
+              std::lock_guard<std::mutex> lk(diagnostic_mutex_);
+              diagnostic_running_ = false;
+            }
+            diagnostic_cv_.notify_all();
           } catch (const ob::Error &e) {
             RCLCPP_WARN_STREAM(logger_, "Diagnostic update failed: "
                                             << e.getMessage() << " - Device may be disconnected");
@@ -4585,6 +4610,10 @@ void OBCameraNode::setFilterCallback(const std::shared_ptr<SetFilter ::Request> 
             "The filter switch setting is successful, but the filter parameter setting fails";
         return;
       }
+    } else if (request->filter_name == "FalsePositiveFilter") {
+      auto false_positive_filter = std::make_shared<ob::FalsePositiveFilter>();
+      false_positive_filter->enable(request->filter_enable);
+      depth_filter_list_.push_back(false_positive_filter);
     } else {
       RCLCPP_INFO_STREAM(logger_,
                          request->filter_name
@@ -4592,7 +4621,8 @@ void OBCameraNode::setFilterCallback(const std::shared_ptr<SetFilter ::Request> 
                              << "The filter_name value that can be set is "
                                 "DecimationFilter, HDRMerge, SequenceIdFilter, ThresholdFilter, "
                                 "NoiseRemovalFilter, HardwareNoiseRemoval, SpatialAdvancedFilter, "
-                                "SpatialFastFilter, SpatialModerateFilter and TemporalFilter");
+                                "SpatialFastFilter, SpatialModerateFilter, FalsePositiveFilter and "
+                                "TemporalFilter");
       return;
     }
     for (auto &filter : depth_filter_list_) {
