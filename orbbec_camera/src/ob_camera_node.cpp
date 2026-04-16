@@ -2774,6 +2774,7 @@ void OBCameraNode::publishDepthPointCloud(const std::shared_ptr<ob::FrameSet> &f
     point_cloud_msg->width = valid_count;
     point_cloud_msg->height = 1;
     modifier.resize(valid_count);
+    point_cloud_msg->row_step = point_cloud_msg->width * point_cloud_msg->point_step;
   }
   auto frame_timestamp = getFrameTimestampUs(depth_frame);
   auto timestamp = fromUsToROSTime(frame_timestamp);
@@ -2906,6 +2907,7 @@ void OBCameraNode::publishColoredPointCloud(const std::shared_ptr<ob::FrameSet> 
     point_cloud_msg->width = valid_count;
     point_cloud_msg->height = 1;
     modifier.resize(valid_count);
+    point_cloud_msg->row_step = point_cloud_msg->width * point_cloud_msg->point_step;
   }
   auto frame_timestamp = getFrameTimestampUs(depth_frame);
   std::string frame_id = optical_frame_id_[COLOR];
