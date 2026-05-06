@@ -58,7 +58,7 @@ class MultiCameraSubscriber : public rclcpp::Node {
         is_gemini330_ = isGemini335PID(pid);
       }
     } catch (ob::Error &e) {
-      RCLCPP_ERROR_STREAM(get_logger(), e.getMessage());
+      RCLCPP_ERROR_STREAM(get_logger(), orbbec_camera::formatObErrorWithStatus(e));
     } catch (const std::exception &e) {
       RCLCPP_ERROR_STREAM(get_logger(), e.what());
     } catch (...) {
@@ -90,7 +90,9 @@ class MultiCameraSubscriber : public rclcpp::Node {
            pid == GEMINI_335L_PID || pid == GEMINI_330L_PID || pid == GEMINI_336L_PID ||
            pid == GEMINI_335LG_PID || pid == GEMINI_336LG_PID || pid == GEMINI_335LE_PID ||
            pid == GEMINI_336LE_PID || pid == CUSTOM_ADVANTECH_GEMINI_336_PID ||
-           pid == CUSTOM_ADVANTECH_GEMINI_336L_PID || pid == GEMINI_338_PID;
+           pid == CUSTOM_ADVANTECH_GEMINI_336L_PID || pid == GEMINI_338_PID ||
+           pid == GEMINI_338LG_PID || pid == GEMINI_338LE_PID || pid == GEMINI_338L_PID ||
+           pid == GEMINI_331L_PID;
   }
   void params_init() {
     std::ifstream file(

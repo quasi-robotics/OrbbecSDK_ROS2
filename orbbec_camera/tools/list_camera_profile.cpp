@@ -1,20 +1,80 @@
 #include <rclcpp/rclcpp.hpp>
 #include <orbbec_camera/ob_camera_node_driver.h>
 #include <orbbec_camera/ob_camera_node.h>
-#include <memory>
 #include <magic_enum/magic_enum.hpp>
+#include <cstring>
 #include <iostream>
+#include <memory>
+#include <string>
 
 using namespace orbbec_camera;
 
-std::shared_ptr<ob::Device> initializeDevice(std::shared_ptr<ob::Pipeline> pipeline) {
-  auto device = pipeline->getDevice();
-  if (!device) {
+namespace {
+
+struct CliArgs {
+  bool help = false;
+  std::string serial_number;
+};
+
+void printUsage() {
+  std::cout
+      << "Usage:\n"
+      << "ros2 run orbbec_camera list_camera_profile_mode_node --\\\n"
+      << "      [--serial_number SN]\n\n"
+      << "Parameters:\n"
+      << "  --serial_number SN  Select a specific camera by serial number.\n"
+      << "  -h, --help          Show this help message.\n";
+}
+
+bool parseArgs(int argc, char **argv, CliArgs &args, std::string &error) {
+  for (int i = 1; i < argc; ++i) {
+    const std::string current = argv[i];
+    if (current == "-h" || current == "--help") {
+      args.help = true;
+      return true;
+    }
+
+    if (current.rfind("--serial_number=", 0) == 0) {
+      args.serial_number = current.substr(std::strlen("--serial_number="));
+      if (args.serial_number.empty()) {
+        error = "--serial_number requires a value";
+        return false;
+      }
+      continue;
+    }
+
+    if (current == "--serial_number") {
+      if (++i >= argc) {
+        error = "--serial_number requires a value";
+        return false;
+      }
+      args.serial_number = argv[i];
+      continue;
+    }
+
+    error = "Unknown argument: " + current;
+    return false;
+  }
+
+  return true;
+}
+
+std::shared_ptr<ob::Device> initializeDevice(const std::string& serial_number) {
+  auto context = std::make_shared<ob::Context>();
+  auto device_list = context->queryDeviceList();
+  if (!device_list || device_list->getCount() == 0) {
     std::cout << "No device found" << std::endl;
     return nullptr;
   }
-  return device;
+
+  if (!serial_number.empty()) {
+    return device_list->getDeviceBySN(serial_number.c_str(), OB_DEVICE_DEFAULT_ACCESS);
+  }
+
+  return device_list->getDevice(0, OB_DEVICE_DEFAULT_ACCESS);
 }
+
+}  // namespace
 
 void listSensorProfiles(const std::shared_ptr<ob::Device>& device) {
   auto sensor_list = device->getSensorList();
@@ -26,8 +86,8 @@ void listSensorProfiles(const std::shared_ptr<ob::Device>& device) {
       auto origin_profile = profile_list->getProfile(j);
       if ((sensor->getType() == OB_SENSOR_DEPTH || sensor->getType() == OB_SENSOR_IR_LEFT ||
            sensor->getType() == OB_SENSOR_IR_RIGHT) &&
-          pid == GEMINI_305_PID) {
-        // Gemini 305
+          isGemini305SeriesPID(pid)) {
+        // Gemini 305 series
         auto profile = origin_profile->as<ob::VideoStreamProfile>();
         std::cout << magic_enum::enum_name(sensor->getType()) << " profile: " << profile->getWidth()
                   << "x" << profile->getHeight() << " " << profile->getFps() << "fps "
@@ -89,11 +149,23 @@ void printPreset(const std::shared_ptr<ob::Device>& device) {
     std::cout << "Preset list[" << i << "]: " << name << std::endl;
   }
 }
-int main() {
-  auto pipeline = std::make_shared<ob::Pipeline>();
-  auto device = initializeDevice(pipeline);
+
+int main(int argc, char **argv) {
+  CliArgs args;
+  std::string parse_error;
+  if (!parseArgs(argc, argv, args, parse_error)) {
+    std::cerr << parse_error << std::endl;
+    printUsage();
+    return 1;
+  }
+  if (args.help) {
+    printUsage();
+    return 0;
+  }
+
+  auto device = initializeDevice(args.serial_number);
   if (!device) {
-    return -1;  // Device initialization failed
+    return -1;
   }
   listSensorProfiles(device);
   printDeviceProperties(device);

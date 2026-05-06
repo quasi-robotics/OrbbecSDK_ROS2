@@ -540,6 +540,38 @@ float depthPrecisionFromString(const std::string &depth_precision_level_str) {
   return std::stof(depth_precision_level_str_num);
 }
 
+std::string colorPowerLineFrequencyToString(int value) {
+  switch (value) {
+    case 0:
+      return "disable";
+    case 1:
+      return "50hz";
+    case 2:
+      return "60hz";
+    case 3:
+      return "auto";
+    default:
+      return "unknown";
+  }
+}
+
+std::string depthPrecisionLevelToString(int value) {
+  switch (static_cast<OB_DEPTH_PRECISION_LEVEL>(value)) {
+    case OB_PRECISION_1MM:
+      return "1mm";
+    case OB_PRECISION_0MM8:
+      return "0.8mm";
+    case OB_PRECISION_0MM4:
+      return "0.4mm";
+    case OB_PRECISION_0MM2:
+      return "0.2mm";
+    case OB_PRECISION_0MM1:
+      return "0.1mm";
+    default:
+      return "unknown";
+  }
+}
+
 OBMultiDeviceSyncMode OBSyncModeFromString(const std::string &mode) {
   if (mode == "FREE_RUN") {
     return OBMultiDeviceSyncMode::OB_MULTI_DEVICE_SYNC_MODE_FREE_RUN;
@@ -557,6 +589,43 @@ OBMultiDeviceSyncMode OBSyncModeFromString(const std::string &mode) {
     return OBMultiDeviceSyncMode::OB_MULTI_DEVICE_SYNC_MODE_HARDWARE_TRIGGERING;
   } else {
     return OBMultiDeviceSyncMode::OB_MULTI_DEVICE_SYNC_MODE_FREE_RUN;
+  }
+}
+
+std::string disparityRangeModeToString(int value) {
+  switch (value) {
+    case 0:
+      return "64";
+    case 1:
+      return "128";
+    case 2:
+      return "256";
+    default:
+      return "unknown";
+  }
+}
+
+std::string exposureRangeModeToString(int value) {
+  switch (value) {
+    case 0:
+      return "regular";
+    case 1:
+      return "ultimate";
+    default:
+      return "unknown";
+  }
+}
+
+std::string intraCameraSyncReferenceToString(int value) {
+  switch (value) {
+    case 0:
+      return "Start";
+    case 1:
+      return "Middle";
+    case 2:
+      return "End";
+    default:
+      return "unknown";
   }
 }
 
@@ -941,16 +1010,17 @@ UndistortedImageResult undistortImage(const cv::Mat &image, const OBCameraIntrin
   cv::Mat dist_coeffs = (cv::Mat_<float>(8, 1) << distortion.k1, distortion.k2, distortion.p1,
                          distortion.p2, distortion.k3, distortion.k4, distortion.k5, distortion.k6);
   cv::Size image_size(image.cols, image.rows);
-  cv::Mat new_camera_matrix =
-      cv::getOptimalNewCameraMatrix(camera_matrix, dist_coeffs, image_size, 0.0, image_size);
+  // cv::Mat new_camera_matrix =
+  // cv::getOptimalNewCameraMatrix(camera_matrix, dist_coeffs, image_size, 0.0, image_size);
   // Undistort the image using the new camera matrix
-  cv::undistort(image, result.image, camera_matrix, dist_coeffs, new_camera_matrix);
+  // cv::undistort(image, result.image, camera_matrix, dist_coeffs, new_camera_matrix);
+  cv::undistort(image, result.image, camera_matrix, dist_coeffs);
   // Update the intrinsic parameters with the new camera matrix
   result.new_intrinsic = intrinsic;  // Copy original values first
-  result.new_intrinsic.fx = new_camera_matrix.at<double>(0, 0);
-  result.new_intrinsic.fy = new_camera_matrix.at<double>(1, 1);
-  result.new_intrinsic.cx = new_camera_matrix.at<double>(0, 2);
-  result.new_intrinsic.cy = new_camera_matrix.at<double>(1, 2);
+  // result.new_intrinsic.fx = new_camera_matrix.at<double>(0, 0);
+  // result.new_intrinsic.fy = new_camera_matrix.at<double>(1, 1);
+  // result.new_intrinsic.cx = new_camera_matrix.at<double>(0, 2);
+  // result.new_intrinsic.cy = new_camera_matrix.at<double>(1, 2);
   result.new_intrinsic.width = image.cols;
   result.new_intrinsic.height = image.rows;
   return result;

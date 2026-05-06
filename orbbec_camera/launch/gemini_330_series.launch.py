@@ -114,6 +114,7 @@ def generate_launch_description():
         DeclareLaunchArgument('color_contrast', default_value='-1'),
         DeclareLaunchArgument('color_hue', default_value='-1'),
         DeclareLaunchArgument('color_backlight_compensation', default_value='-1'),#range: 0 - 6, default: 3
+        DeclareLaunchArgument('color_anti_flicker', default_value='false'),
         DeclareLaunchArgument('color_powerline_freq', default_value=''),#disable ,50hz ,60hz ,auto
         DeclareLaunchArgument('enable_color_decimation_filter', default_value='false'),
         DeclareLaunchArgument('color_decimation_filter_scale', default_value='-1'),
@@ -253,12 +254,15 @@ def generate_launch_description():
         DeclareLaunchArgument('color_preset', default_value='Default'),# color preset: Default, Warm Biased AWB
         DeclareLaunchArgument('retry_on_usb3_detection_failure', default_value='false'),
         DeclareLaunchArgument('laser_energy_level', default_value='-1'),
-        DeclareLaunchArgument('enable_sync_host_time', default_value='true'),
+        DeclareLaunchArgument('enable_sync_host_time', default_value='false'),
         DeclareLaunchArgument('time_sync_period', default_value='6.0'), # seconds
         DeclareLaunchArgument('time_domain', default_value='global'),# global, device, system
+        DeclareLaunchArgument('enable_frame_timestamp_csv', default_value='false'),
+        DeclareLaunchArgument('frame_timestamp_csv_file', default_value=''),
         DeclareLaunchArgument('enable_color_undistortion', default_value='false'),
         DeclareLaunchArgument('config_file_path', default_value=''),
         DeclareLaunchArgument('enable_heartbeat', default_value='false'),
+        DeclareLaunchArgument('enable_firmware_log', default_value='false'),
         DeclareLaunchArgument('gmsl_trigger_fps', default_value='3000'),
         DeclareLaunchArgument('enable_gmsl_trigger', default_value='false'),
         DeclareLaunchArgument('disparity_range_mode', default_value='-1'),

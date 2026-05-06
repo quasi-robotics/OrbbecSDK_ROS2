@@ -22,6 +22,7 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <ament_index_cpp/get_package_prefix.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <rcutils/logging.h>
 #include <csignal>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -34,6 +35,12 @@
 
 std::string g_camera_name = "orbbec_camera";  // Assuming this is declared elsewhere
 std::string g_time_domain = "global";         // Assuming this is declared elsewhere
+namespace {
+std::string getLogDirectoryForCamera(const std::string &camera_name) {
+  std::string home_dir = std::getenv("HOME") ? std::getenv("HOME") : "";
+  return (std::filesystem::path(home_dir) / ".ros" / "Log" / camera_name).string();
+}
+}  // namespace
 
 void signalHandler(int sig) {
   // Prevent recursive signal handling
@@ -59,7 +66,7 @@ void signalHandler(int sig) {
     }
     in_signal_handler.store(false);
   } else {
-    std::string log_dir = "Log/";
+    std::filesystem::path log_dir = getLogDirectoryForCamera(g_camera_name);
 
     // get current time
     std::time_t now = std::time(nullptr);
@@ -71,13 +78,13 @@ void signalHandler(int sig) {
 
     // generate log file name
     std::string log_file_name = g_camera_name + "_crash_stack_trace_" + time_stream.str() + ".log";
-    std::string log_file_path = log_dir + log_file_name;
+    std::filesystem::path log_file_path = log_dir / log_file_name;
 
     if (!std::filesystem::exists(log_dir)) {
       std::filesystem::create_directories(log_dir);
     }
 
-    std::cout << "Log crash stack trace to " << log_file_path << std::endl;
+    std::cout << "Log crash stack trace to " << log_file_path.string() << std::endl;
     std::ofstream log_file(log_file_path, std::ios::app);
 
     if (log_file.is_open()) {
@@ -96,6 +103,24 @@ void signalHandler(int sig) {
 
 namespace orbbec_camera {
 backward::SignalHandling OBCameraNodeDriver::sh;
+
+namespace {
+int rosLogSeverityFromString(const std::string_view &log_level) {
+  if (log_level == "debug") {
+    return RCUTILS_LOG_SEVERITY_DEBUG;
+  } else if (log_level == "info") {
+    return RCUTILS_LOG_SEVERITY_INFO;
+  } else if (log_level == "warn") {
+    return RCUTILS_LOG_SEVERITY_WARN;
+  } else if (log_level == "error") {
+    return RCUTILS_LOG_SEVERITY_ERROR;
+  } else if (log_level == "fatal") {
+    return RCUTILS_LOG_SEVERITY_FATAL;
+  }
+  return RCUTILS_LOG_SEVERITY_UNSET;
+}
+}  // namespace
+
 OBCameraNodeDriver::OBCameraNodeDriver(const rclcpp::NodeOptions &node_options)
     : Node("orbbec_camera_node", "/", node_options),
       node_options_(node_options),
@@ -205,19 +230,26 @@ void OBCameraNodeDriver::init() {
   g_camera_name = declare_parameter<std::string>("camera_name", g_camera_name);
   auto log_level_str = declare_parameter<std::string>("log_level", "none");
   auto log_level = obLogSeverityFromString(log_level_str);
+  auto ros_log_level = rosLogSeverityFromString(log_level_str);
   auto log_file_name = declare_parameter<std::string>("log_file_name", "");
-  std::string pwd_dir = std::getenv("PWD") ? std::getenv("PWD") : std::getenv("HOME");
-  std::string log_path = pwd_dir + "/Log/" + g_camera_name;
+  std::string log_path = getLogDirectoryForCamera(g_camera_name);
   // Set logger to console
   ob::Context::setLoggerToConsole(log_level);
   ob::Context::setLoggerToFile(log_level, log_path.c_str());
+  if (ros_log_level != RCUTILS_LOG_SEVERITY_UNSET) {
+    auto ret = rcutils_logging_set_logger_level(this->get_logger().get_name(), ros_log_level);
+    if (ret != RCUTILS_RET_OK) {
+      RCLCPP_WARN_STREAM(logger_, "Failed to set ROS log level to " << log_level_str);
+    }
+  }
   // Set custom log file name if specified
   if (!log_file_name.empty()) {
     try {
       ob::Context::setLoggerFileName(log_file_name);
       RCLCPP_INFO_STREAM(logger_, "SDK log file name set to: " << log_file_name);
     } catch (const ob::Error &e) {
-      RCLCPP_WARN_STREAM(logger_, "Failed to set SDK log file name: " << e.getMessage());
+      RCLCPP_WARN_STREAM(logger_, "Failed to set SDK log file name: "
+                                      << orbbec_camera::formatObErrorWithStatus(e));
     }
   }
   // Force IP
@@ -283,13 +315,14 @@ void OBCameraNodeDriver::init() {
                                                      << device_access_mode_ << ")");
   if (uvc_backend_ == "libuvc") {
     ctx_->setUvcBackendType(OB_UVC_BACKEND_TYPE_LIBUVC);
-    RCLCPP_INFO_STREAM(logger_, "setUvcBackendType:" << uvc_backend_);
+    RCLCPP_INFO_STREAM(logger_, "Set UVC backend to " << uvc_backend_);
   } else if (uvc_backend_ == "v4l2") {
     ctx_->setUvcBackendType(OB_UVC_BACKEND_TYPE_V4L2);
-    RCLCPP_INFO_STREAM(logger_, "setUvcBackendType:" << uvc_backend_);
+    RCLCPP_INFO_STREAM(logger_, "Set UVC backend to " << uvc_backend_);
   } else {
     ctx_->setUvcBackendType(OB_UVC_BACKEND_TYPE_LIBUVC);
-    RCLCPP_INFO_STREAM(logger_, "setUvcBackendType:" << uvc_backend_);
+    RCLCPP_WARN_STREAM(logger_,
+                       "Unsupported uvc_backend '" << uvc_backend_ << "', using default libuvc");
   }
   ctx_->enableNetDeviceEnumeration(enumerate_net_device_);
   device_changed_callback_id_ = ctx_->registerDeviceChangedCallback(
@@ -319,17 +352,16 @@ void OBCameraNodeDriver::init() {
 void OBCameraNodeDriver::onDeviceConnected(const std::shared_ptr<ob::DeviceList> &device_list) {
   CHECK_NOTNULL(device_list);
   {
-    RCLCPP_INFO_STREAM(logger_, "onDeviceConnected called");
+    RCLCPP_INFO_STREAM(logger_, "Device connected callback triggered");
     std::unique_lock<decltype(reset_device_mutex_)> reset_lock(reset_device_mutex_);
     if (reset_device_flag_) {
-      RCLCPP_INFO_STREAM(logger_, "onDeviceConnected : device reset in progress, waiting...");
+      RCLCPP_INFO_STREAM(logger_, "Device reset in progress, waiting before connecting");
       reset_device_cond_.wait(
           reset_lock, [this]() { return !reset_device_flag_ || !is_alive_ || !rclcpp::ok(); });
       if (!is_alive_) {
         return;
       }
-      RCLCPP_INFO_STREAM(logger_,
-                         "onDeviceConnected : device reset completed, continuing connection");
+      RCLCPP_INFO_STREAM(logger_, "Device reset completed, continuing connection");
     }
   }
   if (device_list->getCount() == 0) {
@@ -377,11 +409,9 @@ void OBCameraNodeDriver::onDeviceDisconnected(const std::shared_ptr<ob::DeviceLi
     RCLCPP_INFO_STREAM(logger_, "device with " << uid << " disconnected");
     if (uid == device_unique_id_ || serial_number_ == serial_number) {
       RCLCPP_INFO_STREAM(logger_,
-                         "device with " << uid << " disconnected, notify reset device thread 1.");
+                         "device with " << uid << " disconnected, notify reset device thread");
       reset_device_flag_ = true;
       reset_device_cond_.notify_all();
-      RCLCPP_INFO_STREAM(logger_,
-                         "device with " << uid << " disconnected, notify reset device thread 2.");
       break;
     }
   }
@@ -497,7 +527,7 @@ void OBCameraNodeDriver::resetDevice() {
         }
       }
 
-      RCLCPP_INFO_STREAM(logger_, "resetDevice : Reset device uid: " << device_unique_id_);
+      RCLCPP_INFO_STREAM(logger_, "Resetting device UID: " << device_unique_id_);
       std::lock_guard<decltype(device_lock_)> device_lock(device_lock_);
       {
         // Mark device as disconnected immediately to prevent other threads from accessing it
@@ -516,7 +546,7 @@ void OBCameraNodeDriver::resetDevice() {
 
         if (device_) {
           try {
-            RCLCPP_INFO_STREAM(logger_, "Resetting device_");
+            RCLCPP_INFO_STREAM(logger_, "Resetting device handle");
             // Force free any idle memory before device reset
             if (ctx_) {
               try {
@@ -526,9 +556,10 @@ void OBCameraNodeDriver::resetDevice() {
               }
             }
             device_.reset();
-            RCLCPP_INFO_STREAM(logger_, "device_ reset completed");
+            RCLCPP_INFO_STREAM(logger_, "Device handle reset complete");
           } catch (const ob::Error &e) {
-            RCLCPP_WARN_STREAM(logger_, "OB Exception during device reset: " << e.getMessage());
+            RCLCPP_WARN_STREAM(logger_, "OB Exception during device reset: "
+                                            << orbbec_camera::formatObErrorWithStatus(e));
           } catch (const std::exception &e) {
             RCLCPP_WARN_STREAM(logger_, "Standard exception during device reset: " << e.what());
           } catch (...) {
@@ -538,9 +569,9 @@ void OBCameraNodeDriver::resetDevice() {
 
         if (device_info_) {
           try {
-            RCLCPP_INFO_STREAM(logger_, "Resetting device_info_");
+            RCLCPP_INFO_STREAM(logger_, "Resetting device info");
             device_info_.reset();
-            RCLCPP_INFO_STREAM(logger_, "device_info_ reset completed");
+            RCLCPP_INFO_STREAM(logger_, "Device info reset complete");
           } catch (...) {
             RCLCPP_WARN_STREAM(logger_, "Exception during device_info reset");
           }
@@ -553,7 +584,7 @@ void OBCameraNodeDriver::resetDevice() {
     }
     reset_device_cond_.notify_all();
     malloc_trim(0);
-    RCLCPP_INFO_STREAM(logger_, "Reset device uid: " << device_unique_id_ << " done");
+    RCLCPP_INFO_STREAM(logger_, "Device reset complete");
   }
 }
 
@@ -586,7 +617,7 @@ void OBCameraNodeDriver::deviceStatusTimer() {
           ob_camera_node_->getColorStatus(status_msg);
           ob_camera_node_->getDepthStatus(status_msg);
         } catch (const ob::Error &e) {
-          std::string error_msg = e.getMessage() ? e.getMessage() : "Unknown OB error";
+          std::string error_msg = orbbec_camera::formatObErrorWithStatus(e);
           if (error_msg.find("Device is deactivated") != std::string::npos ||
               error_msg.find("disconnected") != std::string::npos ||
               error_msg.find("Send control transfer failed") != std::string::npos) {
@@ -615,7 +646,7 @@ void OBCameraNodeDriver::deviceStatusTimer() {
           status_msg.connection_type = device_info_->getConnectionType();
         }
       } catch (const ob::Error &e) {
-        std::string error_msg = e.getMessage() ? e.getMessage() : "Unknown OB error";
+        std::string error_msg = orbbec_camera::formatObErrorWithStatus(e);
         if (error_msg.find("Device is deactivated") != std::string::npos ||
             error_msg.find("disconnected") != std::string::npos ||
             error_msg.find("Send control transfer failed") != std::string::npos) {
@@ -642,7 +673,7 @@ void OBCameraNodeDriver::deviceStatusTimer() {
           status_msg.calibration_from_factory = calibration_from_factory;
         }
       } catch (const ob::Error &e) {
-        std::string error_msg = e.getMessage() ? e.getMessage() : "Unknown OB error";
+        std::string error_msg = orbbec_camera::formatObErrorWithStatus(e);
         if (error_msg.find("Device is deactivated") != std::string::npos ||
             error_msg.find("disconnected") != std::string::npos ||
             error_msg.find("Send control transfer failed") != std::string::npos) {
@@ -681,7 +712,7 @@ void OBCameraNodeDriver::deviceStatusTimer() {
           status_msg.customer_calibration_ready = false;
         }
       } catch (const ob::Error &e) {
-        std::string error_msg = e.getMessage() ? e.getMessage() : "Unknown OB error";
+        std::string error_msg = orbbec_camera::formatObErrorWithStatus(e);
         if (error_msg.find("Device is deactivated") != std::string::npos ||
             error_msg.find("disconnected") != std::string::npos ||
             error_msg.find("Send control transfer failed") != std::string::npos) {
@@ -811,11 +842,9 @@ std::shared_ptr<ob::Device> OBCameraNodeDriver::selectDeviceBySerialNumber(
   std::transform(serial_number.begin(), serial_number.end(), std::back_inserter(lower_sn),
                  [](auto ch) { return isalpha(ch) ? tolower(ch) : static_cast<int>(ch); });
   for (size_t i = 0; i < list->getCount(); i++) {
-    RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                                "Before lock: Select device serial number: " << serial_number);
+    RCLCPP_DEBUG_STREAM_THROTTLE(logger_, *get_clock(), 5000,
+                                 "Selecting device by serial number: " << serial_number);
     std::lock_guard<decltype(device_lock_)> lock(device_lock_);
-    RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                                "After lock: Select device serial number: " << serial_number);
     try {
       auto pid = list->getPid(i);
       if (isOpenNIDevice(pid)) {
@@ -825,21 +854,23 @@ std::shared_ptr<ob::Device> OBCameraNodeDriver::selectDeviceBySerialNumber(
         if (device_info->getSerialNumber() == serial_number) {
           RCLCPP_INFO_STREAM_THROTTLE(
               logger_, *get_clock(), 5000,
-              "Device serial number " << device_info->getSerialNumber() << " matched");
+              "Matched device serial number: " << device_info->getSerialNumber());
           return device;
         }
       } else {
         std::string sn = list->getSerialNumber(i);
-        RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000, "Device serial number: " << sn);
+        RCLCPP_DEBUG_STREAM_THROTTLE(logger_, *get_clock(), 5000,
+                                     "Checking device serial number: " << sn);
         if (sn == serial_number) {
           RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                                      "Device serial number " << sn << " matched");
+                                      "Matched device serial number: " << sn);
           return list->getDevice(i, device_access_mode_);
         }
       }
     } catch (ob::Error &e) {
-      RCLCPP_ERROR_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                                   "Failed to get device info " << e.getMessage());
+      RCLCPP_ERROR_STREAM_THROTTLE(
+          logger_, *get_clock(), 5000,
+          "Failed to get device info " << orbbec_camera::formatObErrorWithStatus(e));
     } catch (std::exception &e) {
       RCLCPP_ERROR_STREAM_THROTTLE(logger_, *get_clock(), 5000,
                                    "Failed to get device info " << e.what());
@@ -849,15 +880,12 @@ std::shared_ptr<ob::Device> OBCameraNodeDriver::selectDeviceBySerialNumber(
   }
   return nullptr;
 }
-
 std::shared_ptr<ob::Device> OBCameraNodeDriver::selectDeviceByUSBPort(
     const std::shared_ptr<ob::DeviceList> &list, const std::string &usb_port) {
   try {
     RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                                "Before lock: Select device usb port: " << usb_port);
+                                "Selecting device by USB port: " << usb_port);
     std::lock_guard<decltype(device_lock_)> lock(device_lock_);
-    RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                                "After lock: Select device usb port: " << usb_port);
     auto device = list->getDeviceByUid(usb_port.c_str(), device_access_mode_);
     if (device) {
       RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
@@ -871,8 +899,9 @@ std::shared_ptr<ob::Device> OBCameraNodeDriver::selectDeviceByUSBPort(
     }
     return device;
   } catch (ob::Error &e) {
-    RCLCPP_ERROR_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                                 "Failed to get device info " << e.getMessage());
+    RCLCPP_ERROR_STREAM_THROTTLE(
+        logger_, *get_clock(), 5000,
+        "Failed to get device info " << orbbec_camera::formatObErrorWithStatus(e));
   } catch (std::exception &e) {
     RCLCPP_ERROR_STREAM_THROTTLE(logger_, *get_clock(), 5000,
                                  "Failed to get device info " << e.what());
@@ -885,11 +914,9 @@ std::shared_ptr<ob::Device> OBCameraNodeDriver::selectDeviceByUSBPort(
 
 std::shared_ptr<ob::Device> OBCameraNodeDriver::selectDeviceByNetIP(
     const std::shared_ptr<ob::DeviceList> &list, const std::string &net_ip) {
-  RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                              "Before lock: Select device net ip: " << net_ip);
+  RCLCPP_DEBUG_STREAM_THROTTLE(logger_, *get_clock(), 5000,
+                               "Selecting device by network IP: " << net_ip);
   std::lock_guard<decltype(device_lock_)> lock(device_lock_);
-  RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                              "After lock: Select device net ip: " << net_ip);
   std::shared_ptr<ob::Device> device = nullptr;
   for (size_t i = 0; i < list->getCount(); i++) {
     try {
@@ -899,16 +926,17 @@ std::shared_ptr<ob::Device> OBCameraNodeDriver::selectDeviceByNetIP(
       if (list->getIpAddress(i) == nullptr) {
         continue;
       }
-      RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                                  "FindDeviceByNetIP device net ip " << list->getIpAddress(i));
+      RCLCPP_DEBUG_STREAM_THROTTLE(logger_, *get_clock(), 5000,
+                                   "FindDeviceByNetIP device net ip " << list->getIpAddress(i));
       if (std::string(list->getIpAddress(i)) == net_ip) {
         RCLCPP_INFO_STREAM_THROTTLE(logger_, *get_clock(), 5000,
                                     "getDeviceByNetIP device net ip " << net_ip << " done");
         return list->getDevice(i, device_access_mode_);
       }
     } catch (ob::Error &e) {
-      RCLCPP_ERROR_STREAM_THROTTLE(logger_, *get_clock(), 5000,
-                                   "Failed to get device info " << e.getMessage());
+      RCLCPP_ERROR_STREAM_THROTTLE(
+          logger_, *get_clock(), 5000,
+          "Failed to get device info " << orbbec_camera::formatObErrorWithStatus(e));
       continue;
     } catch (std::exception &e) {
       RCLCPP_ERROR_STREAM_THROTTLE(logger_, *get_clock(), 5000,
@@ -937,7 +965,7 @@ void OBCameraNodeDriver::initializeDevice(const std::shared_ptr<ob::Device> &dev
   constexpr int max_retries = 3;
   bool initialized = false;
   device_info_ = device_->getDeviceInfo();
-  RCLCPP_INFO_STREAM(logger_, "Try to connect device via " << device_info_->connectionType());
+  RCLCPP_DEBUG_STREAM(logger_, "Try to connect device via " << device_info_->connectionType());
 
   while (retry_count < max_retries && !initialized) {
     try {
@@ -953,7 +981,7 @@ void OBCameraNodeDriver::initializeDevice(const std::shared_ptr<ob::Device> &dev
     } catch (const ob::Error &e) {
       RCLCPP_ERROR_STREAM(logger_, "Failed to initialize device (Attempt "
                                        << retry_count + 1 << " of " << max_retries
-                                       << "): " << e.getMessage());
+                                       << "): " << orbbec_camera::formatObErrorWithStatus(e));
     } catch (const std::exception &e) {
       RCLCPP_ERROR_STREAM(logger_, "Failed to initialize device (Attempt " << retry_count + 1
                                                                            << " of " << max_retries
@@ -981,6 +1009,7 @@ void OBCameraNodeDriver::initializeDevice(const std::shared_ptr<ob::Device> &dev
   if (enable_sync_host_time_ && !isOpenNIDevice(device_info_->pid()) && device_type_ == "camera") {
     TRY_EXECUTE_BLOCK(device_->timerSyncWithHost());
     if (g_time_domain != "global") {
+      device_->enableGlobalTimestamp(false);
       sync_host_time_timer_ = this->create_wall_timer(time_sync_period_, [this]() {
         // Multiple safety checks before attempting time sync
         if (!device_) {
@@ -1027,9 +1056,10 @@ void OBCameraNodeDriver::initializeDevice(const std::shared_ptr<ob::Device> &dev
           return;
         }
 
-        RCLCPP_INFO_STREAM(logger_, "Sync device time with host");
         TRY_EXECUTE_BLOCK(device_->timerSyncWithHost());
       });
+      RCLCPP_INFO_STREAM(logger_, "Enabled timer sync with host with period "
+                                      << time_sync_period_.count() << " ms");
     }
   }
 
@@ -1041,20 +1071,34 @@ void OBCameraNodeDriver::initializeDevice(const std::shared_ptr<ob::Device> &dev
     RCLCPP_INFO_STREAM(logger_, "ROS Wrapper version: " << OB_ROS_VERSION_STR);
     RCLCPP_INFO_STREAM(logger_, "SDK version: " << getObSDKVersion());
     RCLCPP_INFO_STREAM(logger_, "Hardware version: " << device_info_->getHardwareVersion());
+    try {
+      std::string isp_fw_version = device_->getExtensionInfo("IspFwVer");
+      if (!isp_fw_version.empty()) {
+        RCLCPP_INFO_STREAM(logger_, "ISP firmware version: " << isp_fw_version);
+      }
+      std::string isp_need_version = device_->getExtensionInfo("IspNeedVer");
+      if (!isp_need_version.empty()) {
+        RCLCPP_INFO_STREAM(logger_, "ISP needed version: " << isp_need_version);
+      }
+    } catch (ob::Error &e) {
+      // Some devices don't support ISP firmware version query
+      RCLCPP_DEBUG_STREAM(
+          logger_, "Current device not support ISP firmware version query: " << e.getMessage());
+    }
     RCLCPP_INFO_STREAM(logger_, "usb connect type: " << device_info_->getConnectionType());
   });
   RCLCPP_INFO_STREAM(logger_, "device unique id: " << device_unique_id_);
   RCLCPP_INFO_STREAM(logger_, "Current node pid: " << getpid());
   auto time_cost = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::high_resolution_clock::now() - start_time_);
-  RCLCPP_INFO_STREAM(logger_, "Start device cost " << time_cost.count() << " ms");
+  RCLCPP_DEBUG_STREAM(logger_, "Start device cost: " << time_cost.count() << " ms");
 
   if (!upgrade_firmware_.empty()) {
     // Check if this is a second update (reupdate scenario)
     bool is_second_update = is_reupdating_.load();
 
     if (is_second_update) {
-      RCLCPP_INFO(logger_, "Device reconnected, starting the second firmware update...");
+      RCLCPP_INFO(logger_, "Device reconnected, starting the second firmware update");
     } else {
       RCLCPP_INFO(logger_, "Starting firmware update from file: %s", upgrade_firmware_.c_str());
     }
@@ -1082,7 +1126,7 @@ void OBCameraNodeDriver::initializeDevice(const std::shared_ptr<ob::Device> &dev
 
     if (need_reupdate_) {
       // Some devices require a second update after reboot
-      RCLCPP_INFO(logger_, "The device will reboot and perform a second update automatically.");
+      RCLCPP_INFO(logger_, "The device will reboot and perform a second update automatically");
       // Set flag to indicate we're waiting for device to reboot for second update
       is_reupdating_ = true;
       // Keep upgrade_firmware_ path and wait for device to reconnect
@@ -1092,10 +1136,10 @@ void OBCameraNodeDriver::initializeDevice(const std::shared_ptr<ob::Device> &dev
 
     if (firmware_update_success_) {
       if (is_second_update) {
-        RCLCPP_INFO(logger_, "Second firmware update completed successfully!");
+        RCLCPP_INFO(logger_, "Second firmware update completed successfully");
         is_reupdating_ = false;
       } else {
-        RCLCPP_INFO(logger_, "Firmware update completed successfully!");
+        RCLCPP_INFO(logger_, "Firmware update completed successfully");
       }
       return;
     }
@@ -1108,7 +1152,7 @@ void OBCameraNodeDriver::initializeDevice(const std::shared_ptr<ob::Device> &dev
     ob_lidar_node_->startStreams();
     ob_lidar_node_->startIMU();
   } else {
-    RCLCPP_INFO_STREAM(logger_, "ob_camera_node_ is nullptr");
+    RCLCPP_WARN_STREAM(logger_, "Camera or LiDAR node is null after device initialization");
   }
 
 }  // namespace orbbec_camera
@@ -1180,7 +1224,8 @@ bool OBCameraNodeDriver::applyForceIpConfig() {
       RCLCPP_ERROR(logger_, "[ForceIP] Failed to apply config (SDK returned false)");
     }
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR(logger_, "[ForceIP] ob::Error: %s", e.getMessage());
+    RCLCPP_ERROR(logger_, "[ForceIP] ob::Error: %s",
+                 orbbec_camera::formatObErrorWithStatus(e).c_str());
   } catch (const std::exception &e) {
     RCLCPP_ERROR(logger_, "[ForceIP] std::exception: %s", e.what());
   } catch (...) {
@@ -1267,7 +1312,7 @@ void OBCameraNodeDriver::startDevice(const std::shared_ptr<ob::DeviceList> &list
       // success get lock,break
       break;
     } else if (try_lock_result == EBUSY) {
-      RCLCPP_INFO_STREAM(logger_, "Device lock is held by another process, waiting 100ms");
+      RCLCPP_WARN_STREAM(logger_, "Device lock is held by another process, waiting 100ms");
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     } else {
       RCLCPP_ERROR_STREAM(logger_, "Failed to lock orb_device_lock_");
@@ -1293,12 +1338,12 @@ void OBCameraNodeDriver::startDevice(const std::shared_ptr<ob::DeviceList> &list
     }
     auto end_time = std::chrono::high_resolution_clock::now();
     auto time_cost = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    RCLCPP_INFO_STREAM(logger_, "Select device cost " << time_cost.count() << " ms");
+    RCLCPP_DEBUG_STREAM(logger_, "Select device cost " << time_cost.count() << " ms");
     start_time = std::chrono::high_resolution_clock::now();
     initializeDevice(device);
     end_time = std::chrono::high_resolution_clock::now();
     time_cost = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    RCLCPP_INFO_STREAM(logger_, "Initialize device cost " << time_cost.count() << " ms");
+    RCLCPP_INFO_STREAM(logger_, "Initialize device cost: " << time_cost.count() << " ms");
 
     if (firmware_update_success_) {
       firmware_update_success_ = false;
@@ -1312,15 +1357,16 @@ void OBCameraNodeDriver::startDevice(const std::shared_ptr<ob::DeviceList> &list
     }
 
     auto pid = device->getDeviceInfo()->getPid();
-    if (GEMINI_335LG_PID == pid) {
+    if (GEMINI_335LG_PID == pid || GEMINI_338LG_PID == pid) {
       ob_camera_node_->startGmslTrigger();
     }
-    if (pid == GEMINI_305_PID) {
-      // Fixing 305 hot-swap not outputting power
-      ob_camera_node_->startStreams();
-    }
+    // if (isGemini305SeriesPID(pid)) {
+    //   // Fixing 305 series hot-swap not outputting power
+    //   ob_camera_node_->startStreams();
+    // }
   } catch (ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to initialize device " << e.getMessage());
+    RCLCPP_ERROR_STREAM(
+        logger_, "Failed to initialize device " << orbbec_camera::formatObErrorWithStatus(e));
     start_device_failed = true;
   } catch (std::exception &e) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to initialize device " << e.what());
@@ -1393,7 +1439,8 @@ void OBCameraNodeDriver::updatePresetFirmware(std::string path) {
         }
       }
     } catch (ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_, "Failed to update Preset Firmware " << e.getMessage());
+      RCLCPP_ERROR_STREAM(logger_, "Failed to update Preset Firmware "
+                                       << orbbec_camera::formatObErrorWithStatus(e));
     } catch (std::exception &e) {
       RCLCPP_ERROR_STREAM(logger_, "Failed to update Preset Firmware " << e.what());
     } catch (...) {

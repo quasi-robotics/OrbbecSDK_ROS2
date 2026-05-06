@@ -37,13 +37,23 @@ inline void LogFatal(const char* file, int line, const std::string& message) {
   std::cerr << "Check failed at " << file << ":" << line << ": " << message << std::endl;
   std::abort();
 }
+
+inline const char* getObErrorMessage(const ob::Error& e) {
+  return e.getMessage() ? e.getMessage() : "Unknown OB error";
+}
+
+inline std::string formatObErrorWithStatus(const ob::Error& e) {
+  std::ostringstream os;
+  os << getObErrorMessage(e) << " status:" << static_cast<int>(e.getStatus());
+  return os.str();
+}
 }  // namespace orbbec_camera
 
 #define TRY_EXECUTE_BLOCK(block)                                                                  \
   try {                                                                                           \
     block;                                                                                        \
   } catch (const ob::Error& e) {                                                                  \
-    std::string error_msg = e.getMessage() ? e.getMessage() : "Unknown OB error";                 \
+    std::string error_msg = orbbec_camera::formatObErrorWithStatus(e);                            \
     if (error_msg.find("Device is deactivated") != std::string::npos ||                           \
         error_msg.find("disconnected") != std::string::npos ||                                    \
         error_msg.find("Send control transfer failed") != std::string::npos) {                    \
@@ -66,7 +76,7 @@ inline void LogFatal(const char* file, int line, const std::string& message) {
   } catch (const ob::Error& e) {                                                               \
     RCLCPP_ERROR_STREAM(logger_, "Failed to set " << property << " to " << value << " in "     \
                                                   << __FUNCTION__ << " at line " << __LINE__   \
-                                                  << ": " << e.getMessage());                  \
+                                                  << ": " << orbbec_camera::formatObErrorWithStatus(e)); \
   } catch (const std::exception& e) {                                                          \
     RCLCPP_ERROR_STREAM(logger_, "Failed to set " << property << " to " << value << " in "     \
                                                   << __FUNCTION__ << " at line " << __LINE__   \
@@ -172,7 +182,17 @@ OB_DEPTH_PRECISION_LEVEL depthPrecisionLevelFromString(
 
 float depthPrecisionFromString(const std::string& depth_precision_level_str);
 
+std::string colorPowerLineFrequencyToString(int value);
+
+std::string depthPrecisionLevelToString(int value);
+
 OBMultiDeviceSyncMode OBSyncModeFromString(const std::string& mode);
+
+std::string disparityRangeModeToString(int value);
+
+std::string exposureRangeModeToString(int value);
+
+std::string intraCameraSyncReferenceToString(int value);
 
 OB_SAMPLE_RATE sampleRateFromString(std::string& sample_rate);
 

@@ -18,6 +18,9 @@ rosidl_generate_interfaces(
     ${PROJECT_NAME}
     "msg/DeviceInfo.msg"
     "msg/DeviceStatus.msg"
+    "msg/DepthFilterParam.msg"
+    "msg/DepthFilterState.msg"
+    "msg/DepthFiltersStatus.msg"
     "msg/Extrinsics.msg"
     "msg/Metadata.msg"
     "msg/IMUInfo.msg"

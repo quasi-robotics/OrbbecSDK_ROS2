@@ -169,7 +169,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'log_level',
             default_value='none',
-            description='SDK log level: none, debug, info, warn, error, fatal.'
+            description='Shared SDK and ROS log level: none, debug, info, warn, error, fatal.'
+        ),
+        DeclareLaunchArgument(
+            'log_file_name',
+            default_value='',
+            description='Custom log file name for SDK logs. If empty, default naming is used.'
         ),
         DeclareLaunchArgument(
             'time_domain',
@@ -184,7 +189,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'enable_heartbeat',
             default_value='false',
-            description='Send heartbeat to device. Enable when hardware logging/online monitoring is needed.'
+            description='Send heartbeat to device.'
         ),
         DeclareLaunchArgument(
             'enable_imu',

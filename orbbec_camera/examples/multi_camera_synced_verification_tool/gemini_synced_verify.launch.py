@@ -151,6 +151,7 @@ def generate_launch_description():
         DeclareLaunchArgument('retry_on_usb3_detection_failure', default_value='false'),
         DeclareLaunchArgument('laser_energy_level', default_value='-1'),
         DeclareLaunchArgument('enable_heartbeat', default_value='false'),
+        DeclareLaunchArgument('enable_firmware_log', default_value='false'),
         DeclareLaunchArgument('time_domain', default_value='global'),
         DeclareLaunchArgument('use_intra_process_comms', default_value='false'),
         DeclareLaunchArgument('attach_component_container_enable', default_value='false'),

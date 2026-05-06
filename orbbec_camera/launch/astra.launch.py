@@ -68,10 +68,13 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_ldp', default_value='true'),
         DeclareLaunchArgument('ordered_pc', default_value='false'),
         DeclareLaunchArgument('use_hardware_time', default_value='false'),
+        DeclareLaunchArgument('enable_frame_timestamp_csv', default_value='false'),
+        DeclareLaunchArgument('frame_timestamp_csv_file', default_value=''),
         DeclareLaunchArgument('enable_depth_scale', default_value='true'),
         DeclareLaunchArgument('align_mode', default_value='HW'),
         DeclareLaunchArgument('laser_energy_level', default_value='-1'),
         DeclareLaunchArgument('enable_heartbeat', default_value='false'),
+        DeclareLaunchArgument('enable_firmware_log', default_value='false'),
 
         DeclareLaunchArgument('color_mirror', default_value='false'),
         DeclareLaunchArgument('color_rotation', default_value='-1'),
@@ -101,6 +104,8 @@ def generate_launch_description():
         DeclareLaunchArgument('temporal_filter_weight', default_value='-1.0'),
         DeclareLaunchArgument('enable_hole_filling_filter', default_value='false'),
         DeclareLaunchArgument('hole_filling_filter_mode', default_value=''),
+        DeclareLaunchArgument('enable_mgc_noise_removal_filter', default_value='false'),
+        DeclareLaunchArgument('enable_lut_noise_removal_filter', default_value='false'),
     ]
 
     # Node configuration

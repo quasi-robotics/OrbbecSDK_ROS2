@@ -64,27 +64,26 @@ void OBLidarNode::setAndGetNodeParameter(
 OBLidarNode::~OBLidarNode() noexcept { clean(); }
 
 void OBLidarNode::rebootDevice() {
-  RCLCPP_WARN_STREAM(logger_, "Reboot device");
+  RCLCPP_INFO_STREAM(logger_, "Rebooting device");
   clean();
   if (device_) {
     device_->reboot();
-    RCLCPP_WARN_STREAM(logger_, "Reboot device DONE");
+    RCLCPP_DEBUG_STREAM(logger_, "Reboot device complete");
   }
 }
 
 void OBLidarNode::clean() noexcept {
   std::lock_guard<decltype(device_lock_)> lock(device_lock_);
-  RCLCPP_WARN_STREAM(logger_, "Do destroy ~OBLidarNode");
+  RCLCPP_DEBUG_STREAM(logger_, "Destroying OBLidarNode");
   is_running_.store(false);
-  RCLCPP_WARN_STREAM(logger_, "Stop tf thread");
+  RCLCPP_DEBUG_STREAM(logger_, "Stop tf thread");
   if (tf_thread_ && tf_thread_->joinable()) {
     tf_thread_->join();
   }
-  RCLCPP_WARN_STREAM(logger_, "Stop color frame thread");
-  RCLCPP_WARN_STREAM(logger_, "stop streams");
+  RCLCPP_DEBUG_STREAM(logger_, "Stop streams");
   stopStreams();
   stopIMU();
-  RCLCPP_WARN_STREAM(logger_, "Destroy ~OBLidarNode DONE");
+  RCLCPP_DEBUG_STREAM(logger_, "OBLidarNode cleanup complete");
 }
 
 void OBLidarNode::setupTopics() {
@@ -95,8 +94,9 @@ void OBLidarNode::setupTopics() {
     setupProfiles();
     setupPublishers();
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to setup topics: " << e.getMessage());
-    throw std::runtime_error(e.getMessage());
+    RCLCPP_ERROR_STREAM(logger_,
+                        "Failed to setup topics: " << orbbec_camera::formatObErrorWithStatus(e));
+    throw std::runtime_error(orbbec_camera::formatObErrorWithStatus(e));
   } catch (const std::exception &e) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to setup topics: " << e.what());
     throw std::runtime_error(e.what());
@@ -115,9 +115,9 @@ void OBLidarNode::getParameters() {
     param_name = stream_name_[stream_index] + "_rate";
     setAndGetNodeParameter(rate_int_[stream_index], param_name, 0);
     rate_[stream_index] = OBScanRateFromInt(rate_int_[stream_index]);
-    RCLCPP_INFO_STREAM(logger_, "Input rate: " << magic_enum::enum_name(rate_[stream_index])
-                                               << "  Input format:"
-                                               << magic_enum::enum_name(format_[stream_index]));
+    RCLCPP_DEBUG_STREAM(logger_, "Input rate: " << magic_enum::enum_name(rate_[stream_index])
+                                                << "  Input format:"
+                                                << magic_enum::enum_name(format_[stream_index]));
     param_name = stream_name_[stream_index] + "_frame_id";
     std::string default_frame_id = camera_name_ + "_" + stream_name_[stream_index] + "_frame";
     setAndGetNodeParameter(frame_id_[stream_index], param_name, default_frame_id);
@@ -181,6 +181,8 @@ void OBLidarNode::getParameters() {
 }
 
 void OBLidarNode::setupDevices() {
+  RCLCPP_INFO_STREAM(logger_, "Current time domain: " << time_domain_);
+
   auto sensor_list = device_->getSensorList();
   for (size_t i = 0; i < sensor_list->getCount(); i++) {
     auto sensor = sensor_list->getSensor(i);
@@ -196,14 +198,13 @@ void OBLidarNode::setupDevices() {
   }
   for (const auto &[stream_index, enable] : enable_stream_) {
     if (enable && sensors_.find(stream_index) == sensors_.end()) {
-      RCLCPP_INFO_STREAM(logger_,
-                         magic_enum::enum_name(stream_index.first)
-                             << "sensor isn't supported by current device! -- Skipping...");
+      RCLCPP_WARN_STREAM(logger_, magic_enum::enum_name(stream_index.first)
+                                      << " sensor not supported by current device, skipping");
       enable_stream_[stream_index] = false;
     }
   }
   if (device_->isPropertySupported(OB_PROP_HEARTBEAT_BOOL, OB_PERMISSION_READ_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting heartbeat to " << (enable_heartbeat_ ? "ON" : "OFF"));
+    RCLCPP_INFO_STREAM(logger_, "Current heartbeat: " << (enable_heartbeat_ ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_HEARTBEAT_BOOL, enable_heartbeat_);
   }
   if (!echo_mode_.empty() &&
@@ -214,9 +215,9 @@ void OBLidarNode::setupDevices() {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_LIDAR_SPECIFIC_MODE_INT, 1);
     }
     RCLCPP_INFO_STREAM(
-        logger_, "Setting echo mode to "
-                     << (device_->getIntProperty(OB_PROP_LIDAR_SPECIFIC_MODE_INT) ? "First Echo"
-                                                                                  : "Last Echo"));
+        logger_, "Current echo mode: " << (device_->getIntProperty(OB_PROP_LIDAR_SPECIFIC_MODE_INT)
+                                               ? "First Echo"
+                                               : "Last Echo"));
   }
   if (repetitive_scan_mode_ != -1 &&
       device_->isPropertySupported(OB_PROP_LIDAR_REPETITIVE_SCAN_MODE_INT,
@@ -229,7 +230,7 @@ void OBLidarNode::setupDevices() {
     } else {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_LIDAR_REPETITIVE_SCAN_MODE_INT,
                           repetitive_scan_mode_);
-      RCLCPP_INFO_STREAM(logger_, "Setting repetitive scan mode to " << device_->getIntProperty(
+      RCLCPP_INFO_STREAM(logger_, "Current repetitive scan mode: " << device_->getIntProperty(
                                       OB_PROP_LIDAR_REPETITIVE_SCAN_MODE_INT));
     }
   }
@@ -242,7 +243,7 @@ void OBLidarNode::setupDevices() {
     } else {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_LIDAR_TAIL_FILTER_LEVEL_INT, filter_level_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_LIDAR_APPLY_CONFIGS_INT, 1);
-      RCLCPP_INFO_STREAM(logger_, "Setting filter level to " << device_->getIntProperty(
+      RCLCPP_INFO_STREAM(logger_, "Current filter level: " << device_->getIntProperty(
                                       OB_PROP_LIDAR_TAIL_FILTER_LEVEL_INT));
     }
   }
@@ -255,7 +256,7 @@ void OBLidarNode::setupDevices() {
                    range.min, range.max);
     } else {
       TRY_TO_SET_PROPERTY(setFloatProperty, OB_PROP_LIDAR_MEMS_FOV_SIZE_FLOAT, vertical_fov_);
-      RCLCPP_INFO_STREAM(logger_, "Setting vertical fov to " << device_->getFloatProperty(
+      RCLCPP_INFO_STREAM(logger_, "Current vertical fov: " << device_->getFloatProperty(
                                       OB_PROP_LIDAR_MEMS_FOV_SIZE_FLOAT));
     }
   }
@@ -303,20 +304,20 @@ void OBLidarNode::setupProfiles() {
                                                 << "Format:" << format_[elem]);
         RCLCPP_INFO_STREAM(logger_, "Available profiles:");
         printSensorProfiles(sensor);
-        RCLCPP_ERROR(logger_, "Because can not set this stream, so exit.");
+        RCLCPP_ERROR(logger_, "Failed to configure the requested stream profile, exiting.");
         exit(-1);
       }
       if (!selected_profile) {
-        RCLCPP_WARN_STREAM(logger_, "Given stream configuration is not supported by the device! "
-                                        << " Stream: " << magic_enum::enum_name(elem.first)
-                                        << ", Stream Index: " << elem.second
-                                        << ", Scan Rate: " << rate_[elem]);
+        RCLCPP_WARN_STREAM(
+            logger_, "Requested stream configuration is not supported by the device: "
+                         << "stream=" << magic_enum::enum_name(elem.first)
+                         << ", stream_index=" << elem.second << ", scan_rate=" << rate_[elem]);
         if (default_profile) {
-          RCLCPP_WARN_STREAM(logger_, "Using default profile instead.");
-          RCLCPP_WARN_STREAM(logger_, "default scan Rate "
-                                          << magic_enum::enum_name(default_profile->getScanRate())
-                                          << "default format:"
-                                          << magic_enum::enum_name(default_profile->getFormat()));
+          RCLCPP_WARN_STREAM(logger_, "Using the default profile instead");
+          RCLCPP_WARN_STREAM(
+              logger_, "Default profile: scan_rate="
+                           << magic_enum::enum_name(default_profile->getScanRate())
+                           << ", format=" << magic_enum::enum_name(default_profile->getFormat()));
           selected_profile = default_profile;
         } else {
           RCLCPP_ERROR_STREAM(
@@ -329,11 +330,11 @@ void OBLidarNode::setupProfiles() {
       stream_profile_[elem] = selected_profile;
       rate_[elem] = selected_profile->getScanRate();
       format_[elem] = selected_profile->getFormat();
-      RCLCPP_INFO_STREAM(logger_, " stream "
-                                      << stream_name_[elem] << " is enabled - scan rate: "
-                                      << magic_enum::enum_name(selected_profile->getScanRate())
-                                      << "  format:"
-                                      << magic_enum::enum_name(selected_profile->getFormat()));
+      RCLCPP_DEBUG_STREAM(logger_, "stream "
+                                       << stream_name_[elem] << " is enabled - scan rate: "
+                                       << magic_enum::enum_name(selected_profile->getScanRate())
+                                       << "  format:"
+                                       << magic_enum::enum_name(selected_profile->getFormat()));
     }
   }
   // IMU
@@ -354,12 +355,12 @@ void OBLidarNode::setupProfiles() {
         auto profile = profile_list->getGyroStreamProfile(full_scale_range, sample_rate);
         stream_profile_[stream_index] = profile;
       }
-      RCLCPP_INFO_STREAM(logger_, "stream " << stream_name_[stream_index] << " full scale range "
+      RCLCPP_INFO_STREAM(logger_, "Stream " << stream_name_[stream_index] << " full scale range: "
                                             << (stream_index == ACCEL ? accel_range_ : gyro_range_)
-                                            << " sample rate " << imu_rate_);
+                                            << ", sample rate: " << imu_rate_);
     } catch (const ob::Error &e) {
-      RCLCPP_INFO_STREAM(logger_, "Failed to setup << " << stream_name_[stream_index]
-                                                        << " profile: " << e.getMessage());
+      RCLCPP_INFO_STREAM(logger_, "Failed to set up " << stream_name_[stream_index] << " profile: "
+                                                      << orbbec_camera::formatObErrorWithStatus(e));
       enable_stream_[stream_index] = false;
       stream_profile_[stream_index] = nullptr;
     }
@@ -434,7 +435,8 @@ void OBLidarNode::startStreams() {
       onNewFrameSetCallback(frame_set);
     });
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to start pipeline: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(logger_,
+                        "Failed to start pipeline: " << orbbec_camera::formatObErrorWithStatus(e));
     setupPipelineConfig();
     pipeline_->start(pipeline_config_, [this](const std::shared_ptr<ob::FrameSet> &frame_set) {
       onNewFrameSetCallback(frame_set);
@@ -499,13 +501,14 @@ void OBLidarNode::startIMU() {
 
 void OBLidarNode::stopStreams() {
   if (!pipeline_started_ || !pipeline_) {
-    RCLCPP_INFO_STREAM(logger_, "pipeline not started or not exist, skip stop pipeline");
+    RCLCPP_DEBUG_STREAM(logger_, "Pipeline not started or not exist, skip stop pipeline");
     return;
   }
   try {
     pipeline_->stop();
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to stop pipeline: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(logger_,
+                        "Failed to stop pipeline: " << orbbec_camera::formatObErrorWithStatus(e));
   } catch (...) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to stop pipeline");
   }
@@ -517,14 +520,16 @@ void OBLidarNode::stopIMU() {
   }
 
   if (!imu_sync_output_start_ || !imuPipeline_) {
-    RCLCPP_INFO_STREAM(logger_, "IMU pipeline not started or not exist, skip stop imu pipeline");
+    RCLCPP_DEBUG_STREAM(logger_,
+                        "IMU pipeline not started or unavailable, skip stopping IMU pipeline");
     return;
   }
   try {
     imuPipeline_->stop();
     imu_sync_output_start_ = false;
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to stop IMU pipeline: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(
+        logger_, "Failed to stop IMU pipeline: " << orbbec_camera::formatObErrorWithStatus(e));
   } catch (...) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to stop IMU pipeline");
   }
@@ -537,15 +542,15 @@ void OBLidarNode::setupPipelineConfig() {
   pipeline_config_ = std::make_shared<ob::Config>();
   for (const auto &stream_index : LIDAR_STREAMS) {
     if (enable_stream_[stream_index]) {
-      RCLCPP_INFO_STREAM(logger_, "Enable " << stream_name_[stream_index] << " stream");
+      RCLCPP_DEBUG_STREAM(logger_, "Enable " << stream_name_[stream_index] << " stream");
       auto profile = stream_profile_[stream_index]->as<ob::LiDARStreamProfile>();
 
       if (enable_stream_[stream_index]) {
         auto video_profile = profile;
-        RCLCPP_INFO_STREAM(logger_,
-                           "lidar profile: " << magic_enum::enum_name(video_profile->getScanRate())
-                                             << "  "
-                                             << magic_enum::enum_name(video_profile->getFormat()));
+        RCLCPP_DEBUG_STREAM(logger_,
+                            "lidar profile: " << magic_enum::enum_name(video_profile->getScanRate())
+                                              << "  "
+                                              << magic_enum::enum_name(video_profile->getFormat()));
       }
 
       RCLCPP_INFO_STREAM(
@@ -650,7 +655,8 @@ void OBLidarNode::onNewFrameSetCallback(std::shared_ptr<ob::FrameSet> frame_set)
       }
     }
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "onNewFrameSetCallback error: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(
+        logger_, "onNewFrameSetCallback error: " << orbbec_camera::formatObErrorWithStatus(e));
   } catch (const std::exception &e) {
     RCLCPP_ERROR_STREAM(logger_, "onNewFrameSetCallback error: " << e.what());
   } catch (...) {
@@ -1244,12 +1250,13 @@ void OBLidarNode::calcAndPublishStaticTransform() {
           RCLCPP_DEBUG_STREAM(logger_, "ACCEL and GYRO extrinsics are identical");
         }
       } catch (const ob::Error &e) {
-        RCLCPP_WARN_STREAM(logger_,
-                           "Could not get GYRO extrinsic for verification: " << e.getMessage());
+        RCLCPP_WARN_STREAM(logger_, "Could not get GYRO extrinsic for verification: "
+                                        << orbbec_camera::formatObErrorWithStatus(e));
       }
 
     } catch (const ob::Error &e) {
-      RCLCPP_WARN_STREAM(logger_, "Failed to get ACCEL extrinsic, trying GYRO: " << e.getMessage());
+      RCLCPP_WARN_STREAM(logger_, "Failed to get ACCEL extrinsic, trying GYRO: "
+                                      << orbbec_camera::formatObErrorWithStatus(e));
       try {
         ex = base_stream_profile->getExtrinsicTo(stream_profile_[GYRO]);
         RCLCPP_INFO_STREAM(logger_, "Using GYRO extrinsic for IMU");
@@ -1272,11 +1279,12 @@ void OBLidarNode::calcAndPublishStaticTransform() {
     auto timestamp = node_->now();
     publishStaticTF(timestamp, trans, Q, frame_id_[base_stream_], accel_gyro_frame_id_);
 
-    RCLCPP_INFO_STREAM(logger_, "Publishing static transform from "
-                                    << frame_id_[base_stream_] << " to " << accel_gyro_frame_id_);
-    RCLCPP_INFO_STREAM(logger_, "Translation " << trans[0] << ", " << trans[1] << ", " << trans[2]);
-    RCLCPP_INFO_STREAM(logger_, "Rotation " << Q.getX() << ", " << Q.getY() << ", " << Q.getZ()
-                                            << ", " << Q.getW());
+    RCLCPP_DEBUG_STREAM(logger_, "Publishing static transform from "
+                                     << frame_id_[base_stream_] << " to " << accel_gyro_frame_id_);
+    RCLCPP_DEBUG_STREAM(logger_,
+                        "Translation " << trans[0] << ", " << trans[1] << ", " << trans[2]);
+    RCLCPP_DEBUG_STREAM(logger_, "Rotation " << Q.getX() << ", " << Q.getY() << ", " << Q.getZ()
+                                             << ", " << Q.getW());
   }
 }
 

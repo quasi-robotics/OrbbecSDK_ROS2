@@ -1,4 +1,4 @@
-# 435le\_example\_node
+# Gemini_435Le_example_node
 
 This example node demonstrates how to interact with an Orbbec camera in ROS2 using the Orbbec SDK.
 Users can learn how to retrieve camera information, control camera streams, and read/write camera calibration parameters through this node.
@@ -119,13 +119,14 @@ ros2 topic echo /camera/device_status
 ---
 
 ### 2.5 Set Color AE ROI
+
 In data_param, the first value is the Left setting, the second value is the Right setting, the third value is the Top setting, and the fourth value is the Bottom setting.
 
 ```bash
 ros2 service call /camera/set_color_ae_roi orbbec_camera_msgs/srv/SetArrays '{data_param: [0,1279,0,719]}'
 ```
----
 
+---
 
 ## 3. Additional Features
 
@@ -136,7 +137,6 @@ In this version, data synchronization and publishing have been optimized so that
 
 ---
 
-
 ### 3.2 Added `time_sync_period`
 
 A new parameter **time_sync_period** is introduced to configure the time synchronization interval between the camera module and the host.
@@ -144,7 +144,7 @@ A new parameter **time_sync_period** is introduced to configure the time synchro
 * Unit: **seconds**
 * Function: The camera aligns its internal timestamp with the host at the specified interval, ensuring consistent timestamps.
 
->  **Note** : This parameter only needs to be set when **`enable_sync_host_time = true`** and  **`time_domain = device`** .
+> **Note** : This parameter only needs to be set when **`enable_sync_host_time = true`** and  **`time_domain = device`** .
 
 ---
 

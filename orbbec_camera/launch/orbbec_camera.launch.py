@@ -27,12 +27,15 @@ def generate_launch_arguments():
         #general config
         DeclareLaunchArgument('camera_model', default_value=default_camera_model),
         DeclareLaunchArgument('config_file_path', default_value=''),
+        DeclareLaunchArgument('log_level', default_value='none'),
         #multi-device sync param
         DeclareLaunchArgument('camera_name', default_value='camera'),
         DeclareLaunchArgument('usb_port', default_value=''),
         DeclareLaunchArgument('device_num', default_value='1'),
         DeclareLaunchArgument('sync_mode', default_value='standalone'),
         DeclareLaunchArgument('trigger_out_enabled', default_value='true'),
+        DeclareLaunchArgument('enable_frame_timestamp_csv', default_value='false'),
+        DeclareLaunchArgument('frame_timestamp_csv_file', default_value=''),
         #instra-process demo set
         DeclareLaunchArgument('use_intra_process_comms', default_value='false'),
         DeclareLaunchArgument('attach_component_container_enable', default_value='false'),

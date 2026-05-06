@@ -34,6 +34,7 @@ def generate_launch_description():
         DeclareLaunchArgument("color_camera_info_qos", default_value="default"),
         DeclareLaunchArgument("enable_color_auto_exposure", default_value="true"),
         DeclareLaunchArgument("color_ae_max_exposure", default_value="-1"),
+        DeclareLaunchArgument("color_ae_max_gain", default_value="-1"),
         DeclareLaunchArgument("color_ae_roi_left", default_value="-1"),
         DeclareLaunchArgument("color_ae_roi_right", default_value="-1"),
         DeclareLaunchArgument("color_ae_roi_top", default_value="-1"),
@@ -43,6 +44,7 @@ def generate_launch_description():
         DeclareLaunchArgument("enable_color_auto_white_balance", default_value="true"),
         DeclareLaunchArgument("color_white_balance", default_value="-1"),
         DeclareLaunchArgument("color_brightness", default_value="-1"),
+        DeclareLaunchArgument('color_denoising_level', default_value='-1')
         DeclareLaunchArgument('enable_color_decimation_filter', default_value='false'),
         DeclareLaunchArgument('color_decimation_filter_scale', default_value='-1'),
         DeclareLaunchArgument("depth_width", default_value="0"),
@@ -129,7 +131,10 @@ def generate_launch_description():
         DeclareLaunchArgument("retry_on_usb3_detection_failure", default_value="false"),
         DeclareLaunchArgument("laser_energy_level", default_value="-1"),
         DeclareLaunchArgument("enable_heartbeat", default_value="false"),
+        DeclareLaunchArgument("enable_firmware_log", default_value="false"),
         DeclareLaunchArgument("time_domain", default_value="global"),
+        DeclareLaunchArgument('enable_frame_timestamp_csv', default_value='false'),
+        DeclareLaunchArgument('frame_timestamp_csv_file', default_value=''),
     ]
 
     # Node configuration

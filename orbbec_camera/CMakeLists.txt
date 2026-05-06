@@ -126,6 +126,7 @@ set(SOURCE_FILES
   src/d2c_viewer.cpp
   src/dynamic_params.cpp
   src/image_publisher.cpp
+  src/frame_timestamp_csv_logger.cpp
   src/ob_camera_node_driver.cpp
   src/ob_camera_node.cpp
   src/ob_lidar_node.cpp
@@ -189,10 +190,12 @@ rclcpp_components_register_node(
 add_orbbec_executable(list_devices_node tools/list_devices_node.cpp)
 add_orbbec_executable(list_depth_work_mode_node tools/list_depth_work_mode.cpp)
 add_orbbec_executable(list_camera_profile_mode_node tools/list_camera_profile.cpp)
-add_orbbec_executable(set_device_ip tools/set_device_ip.cpp)
+add_orbbec_executable(firmware_update_tool tools/firmware_update_tool.cpp)
+add_orbbec_executable(ip_config_tool tools/ip_config_tool.cpp)
+add_orbbec_executable(set_device_ip tools/ip_config_tool.cpp)
 add_orbbec_executable(topic_statistics_node tools/topic_statistics.cpp)
 add_orbbec_executable(ob_benchmark_node tools/ob_benchmark.cpp)
-add_orbbec_executable(435le_example_node examples/435le_new_interface/camera_example_node.cpp)
+add_orbbec_executable(435le_example_node examples/Gemini_435Le_example_node/camera_example_node.cpp)
 add_orbbec_executable(service_benchmark_node scripts/service_benchmark_node.cpp)
 add_orbbec_executable(image_sync_example_node examples/multi_camera_time_sync/image_sync_example_node.cpp)
 
@@ -254,7 +257,7 @@ if(DEFINED ENV{BUILDING_PACKAGE})
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/99-obsensor-libusb.rules DESTINATION /etc/udev/rules.d)
 endif()
 
-install(TARGETS list_devices_node list_depth_work_mode_node list_camera_profile_mode_node topic_statistics_node  service_benchmark_node ob_benchmark_node 435le_example_node set_device_ip image_sync_example_node DESTINATION lib/${PROJECT_NAME}/
+install(TARGETS list_devices_node list_depth_work_mode_node list_camera_profile_mode_node firmware_update_tool topic_statistics_node  service_benchmark_node ob_benchmark_node 435le_example_node ip_config_tool set_device_ip image_sync_example_node DESTINATION lib/${PROJECT_NAME}/
 )
 
 if(BUILD_TESTING)

@@ -103,7 +103,10 @@ def generate_launch_description():
         DeclareLaunchArgument("align_mode", default_value="HW"),
         DeclareLaunchArgument("laser_energy_level", default_value="-1"),
         DeclareLaunchArgument("enable_heartbeat", default_value="false"),
+        DeclareLaunchArgument("enable_firmware_log", default_value="false"),
         DeclareLaunchArgument("time_domain", default_value="global"),
+        DeclareLaunchArgument('enable_frame_timestamp_csv', default_value='false'),
+        DeclareLaunchArgument('frame_timestamp_csv_file', default_value=''),
     ]
 
     # Node configuration

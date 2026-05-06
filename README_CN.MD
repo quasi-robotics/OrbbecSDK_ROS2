@@ -25,12 +25,17 @@ OrbbecSDK ROS2 Wrapper 提供 Orbbec 相机与 ROS 2 环境的无缝集成，支
   </thead>
   <tbody>
       <tr>
-      <td rowspan="1" style="text-align: center; font-weight: bold;">Gemini 305</td>
+      <td rowspan="2" style="text-align: center; font-weight: bold;">Gemini 305</td>
       <td>Gemini 305</td>
       <td>not supported</td>
       <td>recommended for new designs</td>
     </tr>
-      <tr>
+    <tr>
+      <td>Gemini 305g</td>
+      <td>not supported</td>
+      <td>recommended for new designs</td>
+    </tr>
+    <tr>
       <td rowspan="2" style="text-align: center; font-weight: bold;">Gemini 340</td>
       <td>Gemini 345</td>
       <td>not supported</td>
@@ -326,10 +331,12 @@ ros2 service call /camera/get_sdk_version orbbec_camera_msgs/srv/GetString '{}'
 | **产品列表** | **推荐固件版本**                                                             |  **启动文件**                                          |
 | ----------------------- | -------------------------------------------------------------------------------------------- | --------------------------- |
 | Gemini 305              | [1.0.30](https://doc.orbbec.com/documentation/Gemini%20305%20Series%20Documentation/Firmware%20Release%20of%20Gemini%20305)                  | gemini305.launch.py             |
+| Gemini 305g             | [1.0.30](https://doc.orbbec.com/documentation/Gemini%20305%20Documentation/Firmware%20Release%20of%20Gemini%20305)                  | gemini305_g.launch.py           |
 | Astra Mini Pro          | [2.0.03](https://github.com/orbbec/OrbbecFirmware/releases/tag/Astra-Mini-Pro)                  | astra.launch.py             |
 | Astra Mini S Pro        | [2.0.03](https://github.com/orbbec/OrbbecFirmware/releases/tag/Astra-Mini-S-Pro)                | astra.launch.py             |
 | Gemini 435Le            | [1.3.6](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemin435Le-Firmware)              | gemini435_le.launch.py      |
 | Gemini 330 series       | [1.6.00](https://orbbec-debian-repos-aws.s3.amazonaws.com/product/Gemini330_Release_1.6.00.zip) | gemini_330_series.launch.py |
+| Gemini 338/338L/338Le/338Lg/331L | 以发布包内推荐固件为准 | gemini_330_series.launch.py |
 | Gemini 215              | [1.0.9](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini215-Firmware)               | gemini210.launch.py         |
 | Gemini 210              | [1.0.9](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini210-Firmware)               | gemini210.launch.py         |
 | Gemini 2                | [1.4.98](https://github.com/orbbec/OrbbecFirmware/releases/tag/Gemini2-Firmware)                | gemini2.launch.py           |

@@ -19,6 +19,7 @@
 #include <thread>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <sstream>
+#include <algorithm>
 
 #include "orbbec_camera/utils.h"
 #include <filesystem>
@@ -36,6 +37,340 @@
 
 namespace orbbec_camera {
 using namespace std::chrono_literals;
+
+std::string OBCameraNode::normalizeDepthFilterName(const std::string &filter_name) {
+  if (filter_name == "HardwareNoiseRemoval") {
+    return "HardwareNoiseRemovalFilter";
+  }
+  if (filter_name == "SpatialFilter") {
+    return "SpatialAdvancedFilter";
+  }
+  return filter_name;
+}
+
+namespace {
+
+std::string getDepthFilterStatusName(const std::string &filter_name) {
+  if (filter_name == "SpatialAdvancedFilter") {
+    return "SpatialFilter";
+  }
+  if (filter_name == "DisparityTransform") {
+    return "DisparityToDepth";
+  }
+  return filter_name;
+}
+
+std::string getDepthFilterStatusParamName(const std::string &filter_name,
+                                          const std::string &param_name) {
+  if (filter_name == "SpatialAdvancedFilter" && param_name == "disp_diff") {
+    return "diff_threshold";
+  }
+  if (filter_name == "SpatialModerateFilter" && param_name == "disp_diff") {
+    return "diff_threshold";
+  }
+  if (filter_name == "TemporalFilter" && param_name == "diff_scale") {
+    return "diff_threshold";
+  }
+  if (filter_name == "DecimationFilter" && param_name == "decimate") {
+    return "scale";
+  }
+  return param_name;
+}
+
+bool shouldExposeDepthFilterParams(const std::string &filter_name) {
+  return filter_name != "MgcNoiseRemovalFilter" && filter_name != "LutNoiseRemovalFilter" &&
+         filter_name != "DisparityTransform" && filter_name != "FalsePositiveFilter" &&
+         filter_name != "EdgeNoiseRemovalFilter";
+}
+
+int64_t getSystemNowUs() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+int64_t getSteadyNowUs() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+}  // namespace
+
+void OBCameraNode::appendDepthFilterParam(DepthFilterState &filter_state, const std::string &name,
+                                          const std::string &value) {
+  orbbec_camera_msgs::msg::DepthFilterParam param;
+  param.name = name;
+  param.value = value;
+  filter_state.params.push_back(param);
+}
+
+DepthFilterState OBCameraNode::buildDepthFilterState(
+    const std::string &filter_name, bool enabled, const std::shared_ptr<ob::Filter> &filter) const {
+  const auto normalized_filter_name = normalizeDepthFilterName(filter_name);
+  DepthFilterState filter_state;
+  filter_state.filter_name = getDepthFilterStatusName(normalized_filter_name);
+  filter_state.enabled = enabled;
+  auto to_param_value = [](const auto &value) {
+    std::ostringstream ss;
+    ss << value;
+    return ss.str();
+  };
+
+  if (normalized_filter_name == "NoiseRemovalFilter") {
+    appendDepthFilterParam(filter_state, "min_diff",
+                           to_param_value(noise_removal_filter_min_diff_));
+    appendDepthFilterParam(filter_state, "max_size",
+                           to_param_value(noise_removal_filter_max_size_));
+  } else if (normalized_filter_name == "HardwareNoiseRemovalFilter") {
+    appendDepthFilterParam(filter_state, "threshold",
+                           to_param_value(hardware_noise_removal_filter_threshold_));
+  }
+
+  if (filter_state.params.empty() && filter &&
+      shouldExposeDepthFilterParams(normalized_filter_name)) {
+    auto format_filter_config_value = [](const OBFilterConfigSchemaItem &config_schema,
+                                         double value) {
+      switch (config_schema.type) {
+        case OB_FILTER_CONFIG_VALUE_TYPE_INT: {
+          return std::to_string(static_cast<long long>(value));
+        }
+        case OB_FILTER_CONFIG_VALUE_TYPE_BOOLEAN:
+          return value != 0.0 ? std::string("true") : std::string("false");
+        case OB_FILTER_CONFIG_VALUE_TYPE_FLOAT:
+        default: {
+          std::ostringstream ss;
+          ss << value;
+          return ss.str();
+        }
+      }
+    };
+
+    try {
+      for (const auto &config_schema : filter->getConfigSchemaVec()) {
+        if (config_schema.name == nullptr || config_schema.name[0] == '\0') {
+          continue;
+        }
+        appendDepthFilterParam(
+            filter_state, getDepthFilterStatusParamName(normalized_filter_name, config_schema.name),
+            format_filter_config_value(config_schema, filter->getConfigValue(config_schema.name)));
+      }
+    } catch (const std::exception &) {
+      // Keep the state without dynamic params if runtime querying fails.
+    }
+  }
+
+  return filter_state;
+}
+
+void OBCameraNode::publishDepthFiltersStatus() {
+  if (!depth_filters_status_pub_) {
+    return;
+  }
+
+  std::vector<std::shared_ptr<ob::Filter>> depth_filters_snapshot;
+  {
+    std::lock_guard<std::mutex> depth_filter_lock(depth_filter_mutex_);
+    depth_filters_snapshot = depth_filter_list_;
+  }
+
+  auto find_depth_filter = [&depth_filters_snapshot,
+                            this](const std::string &filter_name) -> std::shared_ptr<ob::Filter> {
+    const auto normalized_name = normalizeDepthFilterName(filter_name);
+    auto it = std::find_if(depth_filters_snapshot.begin(), depth_filters_snapshot.end(),
+                           [&normalized_name](const auto &filter) {
+                             return normalizeDepthFilterName(filter->type()) == normalized_name ||
+                                    normalizeDepthFilterName(filter->getName()) == normalized_name;
+                           });
+    if (it == depth_filters_snapshot.end()) {
+      return nullptr;
+    }
+    return *it;
+  };
+
+  auto sync_filter_enabled = [&find_depth_filter](const std::string &filter_name,
+                                                  bool &cached_state) {
+    auto filter = find_depth_filter(filter_name);
+    if (!filter) {
+      return;
+    }
+    try {
+      cached_state = filter->isEnabled();
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  };
+
+  sync_filter_enabled("DecimationFilter", enable_decimation_filter_);
+  sync_filter_enabled("HDRMerge", enable_hdr_merge_);
+  sync_filter_enabled("SequenceIdFilter", enable_sequence_id_filter_);
+  sync_filter_enabled("SpatialAdvancedFilter", enable_spatial_filter_);
+  sync_filter_enabled("TemporalFilter", enable_temporal_filter_);
+  sync_filter_enabled("HoleFillingFilter", enable_hole_filling_filter_);
+  sync_filter_enabled("DisparityTransform", enable_disparity_to_depth_);
+  sync_filter_enabled("ThresholdFilter", enable_threshold_filter_);
+  sync_filter_enabled("SpatialFastFilter", enable_spatial_fast_filter_);
+  sync_filter_enabled("SpatialModerateFilter", enable_spatial_moderate_filter_);
+  sync_filter_enabled("FalsePositiveFilter", enable_false_positive_filter_);
+  sync_filter_enabled("MgcNoiseRemovalFilter", enable_mgc_noise_removal_filter_);
+  sync_filter_enabled("LutNoiseRemovalFilter", enable_lut_noise_removal_filter_);
+
+  if (device_->isPropertySupported(OB_PROP_DEPTH_SOFT_FILTER_BOOL, OB_PERMISSION_READ_WRITE)) {
+    try {
+      enable_noise_removal_filter_ = device_->getBoolProperty(OB_PROP_DEPTH_SOFT_FILTER_BOOL);
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (device_->isPropertySupported(OB_PROP_DEPTH_MAX_DIFF_INT, OB_PERMISSION_WRITE)) {
+    try {
+      noise_removal_filter_min_diff_ = device_->getIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT);
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (device_->isPropertySupported(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT, OB_PERMISSION_WRITE)) {
+    try {
+      noise_removal_filter_max_size_ = device_->getIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT);
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL,
+                                   OB_PERMISSION_READ_WRITE)) {
+    try {
+      enable_hardware_noise_removal_filter_ =
+          device_->getBoolProperty(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL);
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT,
+                                   OB_PERMISSION_READ_WRITE)) {
+    try {
+      hardware_noise_removal_filter_threshold_ =
+          device_->getFloatProperty(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT);
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+
+  if (auto filter = find_depth_filter("DecimationFilter")) {
+    try {
+      decimation_filter_scale_ =
+          static_cast<int>(filter->as<ob::DecimationFilter>()->getScaleValue());
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (auto filter = find_depth_filter("SequenceIdFilter")) {
+    try {
+      sequence_id_filter_id_ = filter->as<ob::SequenceIdFilter>()->getSelectSequenceId();
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (auto filter = find_depth_filter("ThresholdFilter")) {
+    try {
+      threshold_filter_min_ = static_cast<int>(filter->getConfigValue("min"));
+      threshold_filter_max_ = static_cast<int>(filter->getConfigValue("max"));
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (auto filter = find_depth_filter("SpatialAdvancedFilter")) {
+    try {
+      auto params = filter->as<ob::SpatialAdvancedFilter>()->getFilterParams();
+      spatial_filter_alpha_ = params.alpha;
+      spatial_filter_diff_threshold_ = params.disp_diff;
+      spatial_filter_magnitude_ = params.magnitude;
+      spatial_filter_radius_ = params.radius;
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (auto filter = find_depth_filter("TemporalFilter")) {
+    try {
+      temporal_filter_diff_threshold_ = static_cast<float>(filter->getConfigValue("diff_scale"));
+      temporal_filter_weight_ = static_cast<float>(filter->getConfigValue("weight"));
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (auto filter = find_depth_filter("SpatialFastFilter")) {
+    try {
+      auto params = filter->as<ob::SpatialFastFilter>()->getFilterParams();
+      spatial_fast_filter_radius_ = params.radius;
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+  if (auto filter = find_depth_filter("SpatialModerateFilter")) {
+    try {
+      auto params = filter->as<ob::SpatialModerateFilter>()->getFilterParams();
+      spatial_moderate_filter_diff_threshold_ = params.disp_diff;
+      spatial_moderate_filter_magnitude_ = params.magnitude;
+      spatial_moderate_filter_radius_ = params.radius;
+    } catch (const std::exception &) {
+      // Keep the cached value if runtime querying fails.
+    }
+  }
+
+  DepthFiltersStatus msg;
+  msg.header.stamp = node_->now();
+  msg.header.frame_id = camera_name_;
+
+  const bool noise_removal_filter_supported =
+      device_->isPropertySupported(OB_PROP_DEPTH_SOFT_FILTER_BOOL, OB_PERMISSION_READ_WRITE) ||
+      device_->isPropertySupported(OB_PROP_DEPTH_MAX_DIFF_INT, OB_PERMISSION_WRITE) ||
+      device_->isPropertySupported(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT, OB_PERMISSION_WRITE);
+  const bool hardware_noise_removal_filter_supported =
+      device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL,
+                                   OB_PERMISSION_READ_WRITE) ||
+      device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT,
+                                   OB_PERMISSION_READ_WRITE);
+
+  std::vector<std::string> ordered_filter_names;
+  ordered_filter_names.reserve(depth_filters_snapshot.size() + 2);
+  auto append_unique_filter_name = [&ordered_filter_names](const std::string &filter_name) {
+    if (std::find(ordered_filter_names.begin(), ordered_filter_names.end(), filter_name) ==
+        ordered_filter_names.end()) {
+      ordered_filter_names.push_back(filter_name);
+    }
+  };
+  for (const auto &filter : depth_filters_snapshot) {
+    if (!filter) {
+      continue;
+    }
+    append_unique_filter_name(normalizeDepthFilterName(filter->type()));
+  }
+  if (noise_removal_filter_supported) {
+    append_unique_filter_name("NoiseRemovalFilter");
+  }
+  if (hardware_noise_removal_filter_supported) {
+    append_unique_filter_name("HardwareNoiseRemovalFilter");
+  }
+
+  msg.filters.reserve(ordered_filter_names.size());
+  for (const auto &filter_name : ordered_filter_names) {
+    bool enabled = false;
+    auto filter = find_depth_filter(filter_name);
+    if (filter_name == "NoiseRemovalFilter") {
+      enabled = enable_noise_removal_filter_;
+    } else if (filter_name == "HardwareNoiseRemovalFilter") {
+      enabled = enable_hardware_noise_removal_filter_;
+    }
+    if (filter) {
+      try {
+        enabled = filter->isEnabled();
+      } catch (const std::exception &) {
+        // Keep default value when runtime querying fails.
+      }
+    }
+    msg.filters.push_back(buildDepthFilterState(filter_name, enabled, filter));
+  }
+  depth_filters_status_pub_->publish(msg);
+}
 
 OBCameraNode::OBCameraNode(rclcpp::Node *node, std::shared_ptr<ob::Device> device,
                            std::shared_ptr<Parameters> parameters, bool use_intra_process)
@@ -63,6 +398,20 @@ OBCameraNode::OBCameraNode(rclcpp::Node *node, std::shared_ptr<ob::Device> devic
   compression_params_.push_back(cv::IMWRITE_PNG_STRATEGY_DEFAULT);
   setupDefaultImageFormat();
   setupTopics();
+
+  if (enable_frame_timestamp_csv_) {
+    if (frame_timestamp_csv_file_.empty()) {
+      frame_timestamp_csv_file_ =
+          (std::filesystem::current_path() / (camera_name_ + "_frame_timestamp_stats.csv"))
+              .string();
+    }
+    frame_timestamp_csv_logger_ =
+        std::make_unique<FrameTimestampCsvLogger>(true, frame_timestamp_csv_file_, logger_);
+    if (!frame_timestamp_csv_logger_->enabled()) {
+      frame_timestamp_csv_logger_.reset();
+    }
+  }
+
 #if defined(USE_RK_HW_DECODER)
   if (enable_stream_[COLOR] && width_.count(COLOR) && height_.count(COLOR)) {
     jpeg_decoder_ = std::make_unique<RKJPEGDecoder>(width_[COLOR], height_[COLOR]);
@@ -143,17 +492,17 @@ void OBCameraNode::setAndGetNodeParameter(
 OBCameraNode::~OBCameraNode() noexcept { clean(); }
 
 void OBCameraNode::rebootDevice() {
-  RCLCPP_INFO_STREAM(logger_, "Do clean before rebooting device");
+  RCLCPP_DEBUG_STREAM(logger_, "Cleaning before rebooting device");
   malloc_trim(0);
   clean();
   malloc_trim(0);
   std::lock_guard<decltype(device_lock_)> lock(device_lock_);
-  RCLCPP_INFO_STREAM(logger_, "Reboot device");
+  RCLCPP_INFO_STREAM(logger_, "Rebooting device");
   if (device_) {
     device_->reboot();
   }
   malloc_trim(0);
-  RCLCPP_INFO_STREAM(logger_, "Reboot device DONE");
+  RCLCPP_DEBUG_STREAM(logger_, "Reboot device complete");
 }
 
 void OBCameraNode::clean() noexcept {
@@ -163,6 +512,15 @@ void OBCameraNode::clean() noexcept {
   }
   // Set running flag to false first to signal all operations to stop
   is_running_.store(false);
+
+  try {
+    if (frame_timestamp_csv_logger_) {
+      frame_timestamp_csv_logger_->shutdown();
+      frame_timestamp_csv_logger_.reset();
+    }
+  } catch (...) {
+    RCLCPP_WARN_STREAM(logger_, "Exception while shutting down frame timestamp CSV logger");
+  }
 
   // Stop diagnostic timer and updater first BEFORE acquiring device_lock to prevent deadlock
   try {
@@ -189,19 +547,19 @@ void OBCameraNode::clean() noexcept {
 
   // Now acquire the device lock for the rest of the cleanup
   std::lock_guard<decltype(device_lock_)> lock(device_lock_);
-  RCLCPP_WARN_STREAM(logger_, "Do OBCameraNode clean");
+  RCLCPP_DEBUG_STREAM(logger_, "Do OBCameraNode clean");
 
-  RCLCPP_WARN_STREAM(logger_, "Stop tf thread");
+  RCLCPP_DEBUG_STREAM(logger_, "Stop tf thread");
   try {
     if (tf_thread_ && tf_thread_->joinable()) {
       tf_cv_.notify_all();  // Wake up tf thread if it's waiting
       tf_thread_->join();
     }
   } catch (...) {
-    RCLCPP_WARN_STREAM(logger_, "Exception while stopping tf thread");
+    RCLCPP_DEBUG_STREAM(logger_, "Exception while stopping tf thread");
   }
 
-  RCLCPP_WARN_STREAM(logger_, "Stop color frame thread");
+  RCLCPP_DEBUG_STREAM(logger_, "Stop color frame thread");
   try {
     if (colorFrameThread_ && colorFrameThread_->joinable()) {
       color_frame_queue_cv_.notify_all();
@@ -216,28 +574,32 @@ void OBCameraNode::clean() noexcept {
       rightColorFrameThread_->join();
     }
   } catch (...) {
-    RCLCPP_WARN_STREAM(logger_, "Exception while stopping color frame thread");
+    RCLCPP_DEBUG_STREAM(logger_, "Exception while stopping color frame thread");
   }
 
-  RCLCPP_WARN_STREAM(logger_, "stop streams");
+  RCLCPP_DEBUG_STREAM(logger_, "stop streams");
   try {
     stopStreams();
     stopIMU();
+    {
+      std::lock_guard<std::mutex> lk(frame_info_logged_mutex_);
+      frame_info_logged_.clear();
+    }
   } catch (...) {
-    RCLCPP_WARN_STREAM(logger_, "Exception while stopping streams");
+    RCLCPP_DEBUG_STREAM(logger_, "Exception while stopping streams");
   }
 
   // Clean up d2c_viewer_ before cleaning buffers
-  RCLCPP_WARN_STREAM(logger_, "Clean d2c_viewer");
+  RCLCPP_DEBUG_STREAM(logger_, "Clean d2c_viewer");
   try {
     if (d2c_viewer_) {
       d2c_viewer_.reset();
     }
   } catch (...) {
-    RCLCPP_WARN_STREAM(logger_, "Exception while cleaning up d2c_viewer");
+    RCLCPP_DEBUG_STREAM(logger_, "Exception while cleaning up d2c_viewer");
   }
 
-  RCLCPP_WARN_STREAM(logger_, "Clean up buffers");
+  RCLCPP_DEBUG_STREAM(logger_, "Clean up buffers");
   try {
     delete[] rgb_buffer_;
     rgb_buffer_ = nullptr;
@@ -256,10 +618,10 @@ void OBCameraNode::clean() noexcept {
       jpeg_decoder_right_.reset();
     }
   } catch (...) {
-    RCLCPP_WARN_STREAM(logger_, "Exception while cleaning up buffers");
+    RCLCPP_DEBUG_STREAM(logger_, "Exception while cleaning up buffers");
   }
 
-  RCLCPP_WARN_STREAM(logger_, "Do OBCameraNode clean DONE");
+  RCLCPP_DEBUG_STREAM(logger_, "OBCameraNode cleanup complete");
   cleaning_.store(false);
 }
 
@@ -274,16 +636,16 @@ void OBCameraNode::setupDevices() {
     RCLCPP_INFO_STREAM(logger_, "Set device preset: " << depth_work_mode_);
   } else if (!device_preset_.empty()) {
     try {
-      RCLCPP_INFO_STREAM(logger_, "Available presets:");
+      RCLCPP_DEBUG_STREAM(logger_, "Available presets:");
       auto preset_list = device_->getAvailablePresetList();
       for (uint32_t i = 0; i < preset_list->getCount(); i++) {
-        RCLCPP_INFO_STREAM(logger_, "Preset " << i << ": " << preset_list->getName(i));
+        RCLCPP_DEBUG_STREAM(logger_, "Preset " << i << ": " << preset_list->getName(i));
       }
-      RCLCPP_INFO_STREAM(logger_, "Load device preset: " << device_preset_);
       TRY_EXECUTE_BLOCK(device_->loadPreset(device_preset_.c_str()));
-      RCLCPP_INFO_STREAM(logger_, "Device preset " << device_->getCurrentPresetName() << " loaded");
+      RCLCPP_INFO_STREAM(logger_, "Loaded device preset: " << device_->getCurrentPresetName());
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_, "Failed to load device preset: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(
+          logger_, "Failed to load device preset: " << orbbec_camera::formatObErrorWithStatus(e));
     } catch (const std::exception &e) {
       RCLCPP_ERROR_STREAM(logger_, "Failed to load device preset: " << e.what());
     } catch (...) {
@@ -314,11 +676,11 @@ void OBCameraNode::setupDevices() {
     }
 
     RCLCPP_INFO_STREAM(
-        logger_, "Setting preset resolution config to "
-                     << "width: " << presetResolutionConfig.width
-                     << ", height: " << presetResolutionConfig.height << ", ir decimation factor: "
-                     << presetResolutionConfig.irDecimationFactor << ", depth decimation factor: "
-                     << presetResolutionConfig.depthDecimationFactor);
+        logger_, "Set preset resolution config: "
+                     << "width=" << presetResolutionConfig.width
+                     << ", height=" << presetResolutionConfig.height
+                     << ", ir_decimation=" << presetResolutionConfig.irDecimationFactor
+                     << ", depth_decimation=" << presetResolutionConfig.depthDecimationFactor);
 
     TRY_EXECUTE_BLOCK(device_->setStructuredData(OB_STRUCT_PRESET_RESOLUTION_CONFIG,
                                                  (uint8_t *)&presetResolutionConfig,
@@ -341,9 +703,8 @@ void OBCameraNode::setupDevices() {
 
   for (const auto &[stream_index, enable] : enable_stream_) {
     if (enable && sensors_.find(stream_index) == sensors_.end()) {
-      RCLCPP_INFO_STREAM(logger_,
-                         magic_enum::enum_name(stream_index.first)
-                             << "sensor isn't supported by current device! -- Skipping...");
+      RCLCPP_DEBUG_STREAM(logger_, magic_enum::enum_name(stream_index.first)
+                                       << " sensor not supported by current device, skipping");
       enable_stream_[stream_index] = false;
     }
   }
@@ -357,22 +718,27 @@ void OBCameraNode::setupDevices() {
                         retry_on_usb3_detection_failure_);
   }
   if (device_->isPropertySupported(OB_PROP_HEARTBEAT_BOOL, OB_PERMISSION_READ_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting heartbeat to " << (enable_heartbeat_ ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_HEARTBEAT_BOOL, enable_heartbeat_);
+    RCLCPP_INFO_STREAM(
+        logger_,
+        "Current heartbeat: " << (device_->getBoolProperty(OB_PROP_HEARTBEAT_BOOL) ? "ON" : "OFF"));
   }
+  device_->enableFirmwareLog(enable_firmware_log_);
+  RCLCPP_INFO_STREAM(logger_, "Set firmware log to " << (enable_firmware_log_ ? "ON" : "OFF"));
   if (max_depth_limit_ > 0 &&
       device_->isPropertySupported(OB_PROP_MAX_DEPTH_INT, OB_PERMISSION_READ_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting max depth limit to " << max_depth_limit_);
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_MAX_DEPTH_INT, max_depth_limit_);
+    RCLCPP_INFO_STREAM(
+        logger_, "Current max depth limit: " << device_->getIntProperty(OB_PROP_MAX_DEPTH_INT));
   }
   if (min_depth_limit_ > 0 &&
       device_->isPropertySupported(OB_PROP_MIN_DEPTH_INT, OB_PERMISSION_READ_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting min depth limit to " << min_depth_limit_);
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_MIN_DEPTH_INT, min_depth_limit_);
+    RCLCPP_INFO_STREAM(
+        logger_, "Current min depth limit: " << device_->getIntProperty(OB_PROP_MIN_DEPTH_INT));
   }
   if (laser_energy_level_ != -1 &&
       device_->isPropertySupported(OB_PROP_LASER_ENERGY_LEVEL_INT, OB_PERMISSION_READ_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting laser energy level to " << laser_energy_level_);
     auto range = device_->getIntPropertyRange(OB_PROP_LASER_ENERGY_LEVEL_INT);
     if (laser_energy_level_ < range.min || laser_energy_level_ > range.max) {
       RCLCPP_ERROR_STREAM(logger_,
@@ -380,12 +746,11 @@ void OBCameraNode::setupDevices() {
     } else {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_LASER_ENERGY_LEVEL_INT, laser_energy_level_);
       auto new_laser_energy_level = device_->getIntProperty(OB_PROP_LASER_ENERGY_LEVEL_INT);
-      RCLCPP_INFO_STREAM(logger_,
-                         "Laser energy level set to " << new_laser_energy_level << " (new value)");
+      RCLCPP_INFO_STREAM(logger_, "Current energy level: " << new_laser_energy_level);
     }
   }
   if (depth_registration_ && align_mode_ == "SW") {
-    RCLCPP_INFO_STREAM(logger_, "Create align filter");
+    RCLCPP_DEBUG_STREAM(logger_, "Create align filter");
     align_filter_ = std::make_unique<ob::Align>(align_target_stream_);
   }
   if (sensors_.find(DEPTH) != sensors_.end() &&
@@ -394,21 +759,21 @@ void OBCameraNode::setupDevices() {
     if (disparity_to_depth_mode_ == "HW") {
       device_->setBoolProperty(OB_PROP_DISPARITY_TO_DEPTH_BOOL, 1);
       device_->setBoolProperty(OB_PROP_SDK_DISPARITY_TO_DEPTH_BOOL, 0);
-      RCLCPP_INFO_STREAM(logger_, "Depth process is HW");
+      RCLCPP_INFO_STREAM(logger_, "Disparity to depth mode: HW");
     } else if (disparity_to_depth_mode_ == "SW") {
       device_->setBoolProperty(OB_PROP_DISPARITY_TO_DEPTH_BOOL, 0);
       device_->setBoolProperty(OB_PROP_SDK_DISPARITY_TO_DEPTH_BOOL, 1);
-      RCLCPP_INFO_STREAM(logger_, "Depth process is SW");
+      RCLCPP_INFO_STREAM(logger_, "Disparity to depth mode: SW");
     } else if (disparity_to_depth_mode_ == "disable") {
       device_->setBoolProperty(OB_PROP_DISPARITY_TO_DEPTH_BOOL, 0);
       device_->setBoolProperty(OB_PROP_SDK_DISPARITY_TO_DEPTH_BOOL, 0);
-      RCLCPP_INFO_STREAM(logger_, "Depth process is disable");
+      RCLCPP_INFO_STREAM(logger_, "Disparity to depth mode: disabled");
     } else {
-      RCLCPP_ERROR_STREAM(logger_, "Depth process is keep default");
+      RCLCPP_WARN_STREAM(logger_, "Unknown disparity to depth mode '"
+                                      << disparity_to_depth_mode_ << "', keeping default settings");
     }
   }
   if (device_->isPropertySupported(OB_PROP_LDP_BOOL, OB_PERMISSION_READ_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting LDP to " << (enable_ldp_ ? "ON" : "OFF"));
     if (device_->isPropertySupported(OB_PROP_LASER_CONTROL_INT, OB_PERMISSION_READ_WRITE)) {
       auto laser_enable = device_->getIntProperty(OB_PROP_LASER_CONTROL_INT);
       TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_LDP_BOOL, enable_ldp_);
@@ -423,6 +788,8 @@ void OBCameraNode::setupDevices() {
         TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_LDP_BOOL, enable_ldp_);
       }
     }
+    RCLCPP_INFO_STREAM(
+        logger_, "Current LDP: " << (device_->getBoolProperty(OB_PROP_LDP_BOOL) ? "ON" : "OFF"));
   }
   if (ldp_power_level_ != -1 &&
       device_->isPropertySupported(OB_PROP_LASER_POWER_LEVEL_CONTROL_INT, OB_PERMISSION_WRITE)) {
@@ -431,22 +798,25 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "ldp power level value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting lrm power level to " << ldp_power_level_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_LASER_POWER_LEVEL_CONTROL_INT, ldp_power_level_);
+      RCLCPP_INFO_STREAM(logger_, "Current lrm power level: " << device_->getIntProperty(
+                                      OB_PROP_LASER_POWER_LEVEL_CONTROL_INT));
     }
   }
   if (device_->isPropertySupported(OB_PROP_LASER_CONTROL_INT, OB_PERMISSION_READ_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting G300 laser control to " << enable_laser_);
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_LASER_CONTROL_INT, enable_laser_);
+    RCLCPP_INFO_STREAM(logger_,
+                       "Current G300 laser control: "
+                           << (device_->getIntProperty(OB_PROP_LASER_CONTROL_INT) ? "ON" : "OFF"));
   }
   if (device_->isPropertySupported(OB_PROP_LASER_BOOL, OB_PERMISSION_READ_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting laser control to " << enable_laser_);
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_LASER_BOOL, enable_laser_);
+    RCLCPP_INFO_STREAM(
+        logger_,
+        "Current laser control: " << (device_->getIntProperty(OB_PROP_LASER_BOOL) ? "ON" : "OFF"));
   }
   if (!sync_mode_str_.empty()) {
     auto sync_config = device_->getMultiDeviceSyncConfig();
-    RCLCPP_INFO_STREAM(logger_,
-                       "Current sync mode: " << magic_enum::enum_name(sync_config.syncMode));
     std::transform(sync_mode_str_.begin(), sync_mode_str_.end(), sync_mode_str_.begin(), ::toupper);
     sync_mode_ = OBSyncModeFromString(sync_mode_str_);
     sync_config.syncMode = sync_mode_;
@@ -458,7 +828,8 @@ void OBCameraNode::setupDevices() {
     sync_config.framesPerTrigger = frames_per_trigger_;
     TRY_EXECUTE_BLOCK(device_->setMultiDeviceSyncConfig(sync_config));
     sync_config = device_->getMultiDeviceSyncConfig();
-    RCLCPP_INFO_STREAM(logger_, "Set sync mode: " << magic_enum::enum_name(sync_config.syncMode));
+    RCLCPP_INFO_STREAM(logger_,
+                       "Current sync mode: " << magic_enum::enum_name(sync_config.syncMode));
     if (sync_mode_ == OB_MULTI_DEVICE_SYNC_MODE_SOFTWARE_TRIGGERING) {
       RCLCPP_INFO_STREAM(logger_, "Frames per trigger: " << sync_config.framesPerTrigger);
       RCLCPP_INFO_STREAM(logger_,
@@ -472,8 +843,11 @@ void OBCameraNode::setupDevices() {
   }
   if (device_->isPropertySupported(OB_DEVICE_PTP_CLOCK_SYNC_ENABLE_BOOL,
                                    OB_PERMISSION_READ_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Set PTP Config: " << (enable_ptp_config_ ? "ON" : "OFF"));
     device_->setBoolProperty(OB_DEVICE_PTP_CLOCK_SYNC_ENABLE_BOOL, enable_ptp_config_);
+    RCLCPP_INFO_STREAM(
+        logger_, "Current PTP Config: "
+                     << (device_->getBoolProperty(OB_DEVICE_PTP_CLOCK_SYNC_ENABLE_BOOL) ? "ON"
+                                                                                        : "OFF"));
   }
 
   if (device_->isPropertySupported(OB_PROP_DEPTH_PRECISION_LEVEL_INT, OB_PERMISSION_READ_WRITE) &&
@@ -481,7 +855,10 @@ void OBCameraNode::setupDevices() {
     auto default_precision_level = device_->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
     if (default_precision_level != depth_precision_) {
       device_->setIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT, depth_precision_);
-      RCLCPP_INFO_STREAM(logger_, "set depth precision to " << depth_precision_str_);
+      const auto current_depth_precision =
+          device_->getIntProperty(OB_PROP_DEPTH_PRECISION_LEVEL_INT);
+      RCLCPP_INFO_STREAM(logger_, "Current depth precision: "
+                                      << depthPrecisionLevelToString(current_depth_precision));
     }
   } else if (device_->isPropertySupported(OB_PROP_DEPTH_UNIT_FLEXIBLE_ADJUSTMENT_FLOAT,
                                           OB_PERMISSION_READ_WRITE) &&
@@ -494,9 +871,12 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR_STREAM(
           logger_, "depth unit flexible adjustment value is out of range, please check the value");
     } else {
-      RCLCPP_INFO_STREAM(logger_, "set depth unit to " << depth_unit_flexible_adjustment << "mm");
       TRY_TO_SET_PROPERTY(setFloatProperty, OB_PROP_DEPTH_UNIT_FLEXIBLE_ADJUSTMENT_FLOAT,
                           depth_unit_flexible_adjustment);
+      RCLCPP_INFO_STREAM(
+          logger_, "Current depth unit: "
+                       << device_->getFloatProperty(OB_PROP_DEPTH_UNIT_FLEXIBLE_ADJUSTMENT_FLOAT)
+                       << "mm");
     }
   }
 
@@ -519,9 +899,10 @@ void OBCameraNode::setupDevices() {
         mirrorPropertyID = OB_PROP_COLOR_RIGHT_MIRROR_BOOL;
       }
       if (device_->isPropertySupported(mirrorPropertyID, OB_PERMISSION_WRITE)) {
-        RCLCPP_INFO_STREAM(logger_, "Setting " << stream_name_[stream_index] << " mirror to "
-                                               << (mirror_stream_[stream_index] ? "ON" : "OFF"));
         TRY_TO_SET_PROPERTY(setBoolProperty, mirrorPropertyID, mirror_stream_[stream_index]);
+        RCLCPP_INFO_STREAM(
+            logger_, "Current " << stream_name_[stream_index] << " mirror: "
+                                << (device_->getBoolProperty(mirrorPropertyID) ? "ON" : "OFF"));
       }
       OBPropertyID flipPropertyID = OB_PROP_DEPTH_FLIP_BOOL;
       if (stream_index == COLOR) {
@@ -540,9 +921,10 @@ void OBCameraNode::setupDevices() {
         flipPropertyID = OB_PROP_COLOR_RIGHT_FLIP_BOOL;
       }
       if (device_->isPropertySupported(flipPropertyID, OB_PERMISSION_WRITE)) {
-        RCLCPP_INFO_STREAM(logger_, "Setting " << stream_name_[stream_index] << " flip to "
-                                               << (flip_stream_[stream_index] ? "ON" : "OFF"));
         TRY_TO_SET_PROPERTY(setBoolProperty, flipPropertyID, flip_stream_[stream_index]);
+        RCLCPP_INFO_STREAM(logger_,
+                           "Current " << stream_name_[stream_index] << " flip: "
+                                      << (device_->getBoolProperty(flipPropertyID) ? "ON" : "OFF"));
       }
       OBPropertyID rotationPropertyID = OB_PROP_DEPTH_ROTATE_INT;
       if (stream_index == COLOR) {
@@ -562,25 +944,20 @@ void OBCameraNode::setupDevices() {
       }
       if (rotation_stream_[stream_index] != -1 &&
           device_->isPropertySupported(rotationPropertyID, OB_PERMISSION_WRITE)) {
-        RCLCPP_INFO_STREAM(logger_, "Setting " << stream_name_[stream_index] << " rotation to "
-                                               << rotation_stream_[stream_index]);
         TRY_TO_SET_PROPERTY(setIntProperty, rotationPropertyID, rotation_stream_[stream_index]);
+        RCLCPP_INFO_STREAM(logger_, "Current " << stream_name_[stream_index] << " rotation: "
+                                               << device_->getIntProperty(rotationPropertyID));
       }
     }
   }
 
-  if (sensors_.find(DEPTH) != sensors_.end() &&
-      device_->isPropertySupported(OB_PROP_DEPTH_SOFT_FILTER_BOOL, OB_PERMISSION_READ_WRITE)) {
-    device_->setBoolProperty(OB_PROP_DEPTH_SOFT_FILTER_BOOL, enable_noise_removal_filter_);
-    RCLCPP_INFO_STREAM(
-        logger_, "Setting noise removal filter:" << (enable_noise_removal_filter_ ? "ON" : "OFF"));
-  }
-
   if (device_->isPropertySupported(OB_PROP_COLOR_AUTO_WHITE_BALANCE_BOOL, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting color auto white balance to "
-                                    << (enable_color_auto_white_balance_ ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_COLOR_AUTO_WHITE_BALANCE_BOOL,
                         enable_color_auto_white_balance_);
+    RCLCPP_INFO_STREAM(
+        logger_,
+        "Current color auto white balance: "
+            << (device_->getBoolProperty(OB_PROP_COLOR_AUTO_WHITE_BALANCE_BOOL) ? "ON" : "OFF"));
   }
   if (!color_preset_.empty() &&
       device_->isPropertySupported(OB_PROP_COLOR_PRESET_PRIORITY_INT, OB_PERMISSION_WRITE)) {
@@ -597,8 +974,11 @@ void OBCameraNode::setupDevices() {
                                                 << ". Supported values: Default, Warm Biased AWB");
     }
     if (preset_value >= 0) {
-      RCLCPP_INFO_STREAM(logger_, "Setting color preset to " << color_preset_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_PRESET_PRIORITY_INT, preset_value);
+      RCLCPP_INFO_STREAM(logger_, "Current color preset: "
+                                      << (device_->getIntProperty(OB_PROP_COLOR_PRESET_PRIORITY_INT)
+                                              ? "Warm Biased AWB"
+                                              : "Default"));
     }
   }
   if (color_exposure_ != -1 &&
@@ -608,8 +988,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "color exposure value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color exposure to " << color_exposure_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_EXPOSURE_INT, color_exposure_);
+      RCLCPP_INFO_STREAM(logger_, "Current color exposure: "
+                                      << device_->getIntProperty(OB_PROP_COLOR_EXPOSURE_INT));
     }
   }
   if (color_gain_ != -1 &&
@@ -619,22 +1000,27 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "color gain value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color gain to " << color_gain_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_GAIN_INT, color_gain_);
+      RCLCPP_INFO_STREAM(logger_,
+                         "Current color gain: " << device_->getIntProperty(OB_PROP_COLOR_GAIN_INT));
     }
   }
   if (device_->isPropertySupported(OB_PROP_COLOR_AUTO_EXPOSURE_PRIORITY_INT, OB_PERMISSION_WRITE)) {
     int set_enable_color_auto_exposure_priority = enable_color_auto_exposure_priority_ ? 1 : 0;
-    RCLCPP_INFO_STREAM(logger_, "Setting color auto exposure priority to "
-                                    << (set_enable_color_auto_exposure_priority ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_AUTO_EXPOSURE_PRIORITY_INT,
                         set_enable_color_auto_exposure_priority);
+    RCLCPP_INFO_STREAM(
+        logger_,
+        "Current color auto exposure priority: "
+            << (device_->getIntProperty(OB_PROP_COLOR_AUTO_EXPOSURE_PRIORITY_INT) ? "ON" : "OFF"));
   }
   if (device_->isPropertySupported(OB_PROP_COLOR_AUTO_EXPOSURE_BOOL, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(
-        logger_, "Setting color auto exposure to " << (enable_color_auto_exposure_ ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_COLOR_AUTO_EXPOSURE_BOOL,
                         enable_color_auto_exposure_);
+    RCLCPP_INFO_STREAM(
+        logger_,
+        "Current color auto exposure: "
+            << (device_->getBoolProperty(OB_PROP_COLOR_AUTO_EXPOSURE_BOOL) ? "ON" : "OFF"));
   }
   if (color_white_balance_ != -1 &&
       device_->isPropertySupported(OB_PROP_COLOR_WHITE_BALANCE_INT, OB_PERMISSION_WRITE)) {
@@ -644,8 +1030,9 @@ void OBCameraNode::setupDevices() {
                    "color white balance value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color white balance to " << color_white_balance_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_WHITE_BALANCE_INT, color_white_balance_);
+      RCLCPP_INFO_STREAM(logger_, "Current color white balance: "
+                                      << device_->getIntProperty(OB_PROP_COLOR_WHITE_BALANCE_INT));
     }
   }
 
@@ -657,9 +1044,23 @@ void OBCameraNode::setupDevices() {
                    "color AE max exposure value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color AE max exposure to " << color_ae_max_exposure_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_AE_MAX_EXPOSURE_INT,
                           color_ae_max_exposure_);
+      RCLCPP_INFO_STREAM(logger_, "Current color AE max exposure: " << device_->getIntProperty(
+                                      OB_PROP_COLOR_AE_MAX_EXPOSURE_INT));
+    }
+  }
+  if (color_ae_max_gain_ != -1 &&
+      device_->isPropertySupported(OB_PROP_COLOR_AE_MAX_GAIN_INT, OB_PERMISSION_WRITE)) {
+    auto range = device_->getIntPropertyRange(OB_PROP_COLOR_AE_MAX_GAIN_INT);
+    if (color_ae_max_gain_ < range.min || color_ae_max_gain_ > range.max) {
+      RCLCPP_ERROR(logger_,
+                   "color AE max gain value is out of range[%d,%d], please check the value",
+                   range.min, range.max);
+    } else {
+      TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_AE_MAX_GAIN_INT, color_ae_max_gain_);
+      RCLCPP_INFO_STREAM(logger_, "Current color AE max gain: "
+                                      << device_->getIntProperty(OB_PROP_COLOR_AE_MAX_GAIN_INT));
     }
   }
   if (color_brightness_ != -1 &&
@@ -669,8 +1070,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "color brightness value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color brightness to " << color_brightness_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_BRIGHTNESS_INT, color_brightness_);
+      RCLCPP_INFO_STREAM(logger_, "Current color brightness: "
+                                      << device_->getIntProperty(OB_PROP_COLOR_BRIGHTNESS_INT));
     }
   }
   if (color_roi_brightness_ != -1 &&
@@ -681,8 +1083,9 @@ void OBCameraNode::setupDevices() {
                    "color roi brightness value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color roi brightness to " << color_roi_brightness_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_ROI_BRIGHTNESS_INT, color_roi_brightness_);
+      RCLCPP_INFO_STREAM(logger_, "Current color roi brightness: "
+                                      << device_->getIntProperty(OB_PROP_COLOR_ROI_BRIGHTNESS_INT));
     }
   }
   if (color_sharpness_ != -1 &&
@@ -692,8 +1095,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "color sharpness value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color sharpness to " << color_sharpness_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_SHARPNESS_INT, color_sharpness_);
+      RCLCPP_INFO_STREAM(logger_, "Current color sharpness: "
+                                      << device_->getIntProperty(OB_PROP_COLOR_SHARPNESS_INT));
     }
   }
   if (color_gamma_ != -1 &&
@@ -703,8 +1107,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "color gamm value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color gamm to " << color_gamma_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_GAMMA_INT, color_gamma_);
+      RCLCPP_INFO_STREAM(
+          logger_, "Current color gamma: " << device_->getIntProperty(OB_PROP_COLOR_GAMMA_INT));
     }
   }
   if (color_saturation_ != -1 &&
@@ -714,8 +1119,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "color saturation value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color saturation to " << color_saturation_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_SATURATION_INT, color_saturation_);
+      RCLCPP_INFO_STREAM(logger_, "Current color saturation: "
+                                      << device_->getIntProperty(OB_PROP_COLOR_SATURATION_INT));
     }
   }
   if (color_contrast_ != -1 &&
@@ -725,8 +1131,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "color contrast value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color contrast to " << color_contrast_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_CONTRAST_INT, color_contrast_);
+      RCLCPP_INFO_STREAM(logger_, "Current color contrast: "
+                                      << device_->getIntProperty(OB_PROP_COLOR_CONTRAST_INT));
     }
   }
   if (color_hue_ != -1 &&
@@ -736,21 +1143,29 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "color hue value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting color hue to " << color_hue_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_HUE_INT, color_hue_);
+      RCLCPP_INFO_STREAM(logger_,
+                         "Current color hue: " << device_->getIntProperty(OB_PROP_COLOR_HUE_INT));
     }
   }
   if (color_backlight_compensation_ != -1 &&
       device_->isPropertySupported(OB_PROP_COLOR_BACKLIGHT_COMPENSATION_INT, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_,
-                       "Setting color backlight compensation to " << color_backlight_compensation_);
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_BACKLIGHT_COMPENSATION_INT,
                         color_backlight_compensation_);
+    RCLCPP_INFO_STREAM(logger_, "Current color backlight compensation: " << device_->getIntProperty(
+                                    OB_PROP_COLOR_BACKLIGHT_COMPENSATION_INT));
   }
-  if (isGemini335PID(pid_) && color_denoising_level_ != -1 &&
+  if (color_denoising_level_ != -1 &&
       device_->isPropertySupported(OB_PROP_COLOR_DENOISING_LEVEL_INT, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting color denoising level to " << color_denoising_level_);
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_DENOISING_LEVEL_INT, color_denoising_level_);
+    RCLCPP_INFO_STREAM(logger_, "Current color denoising level: "
+                                    << device_->getIntProperty(OB_PROP_COLOR_DENOISING_LEVEL_INT));
+  }
+  if (device_->isPropertySupported(OB_PROP_COLOR_ANTI_FLICKER_BOOL, OB_PERMISSION_WRITE)) {
+    TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_COLOR_ANTI_FLICKER_BOOL, color_anti_flicker_);
+    RCLCPP_INFO_STREAM(
+        logger_, "Current color anti-flicker to "
+                     << (device_->getBoolProperty(OB_PROP_COLOR_ANTI_FLICKER_BOOL) ? "ON" : "OFF"));
   }
   if (!color_powerline_freq_.empty() &&
       device_->isPropertySupported(OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT, OB_PERMISSION_WRITE)) {
@@ -763,7 +1178,10 @@ void OBCameraNode::setupDevices() {
     } else if (color_powerline_freq_ == "auto") {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT, 3);
     }
-    RCLCPP_INFO_STREAM(logger_, "Setting color powerline freq to " << color_powerline_freq_);
+    const auto current_color_powerline_freq =
+        device_->getIntProperty(OB_PROP_COLOR_POWER_LINE_FREQUENCY_INT);
+    RCLCPP_INFO_STREAM(logger_, "Current color powerline freq: " << colorPowerLineFrequencyToString(
+                                    current_color_powerline_freq));
   }
   if (depth_exposure_ != -1 &&
       device_->isPropertySupported(OB_PROP_DEPTH_EXPOSURE_INT, OB_PERMISSION_WRITE)) {
@@ -772,8 +1190,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "depth exposure value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting depth exposure to " << depth_exposure_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_DEPTH_EXPOSURE_INT, depth_exposure_);
+      RCLCPP_INFO_STREAM(logger_, "Current depth exposure: "
+                                      << device_->getIntProperty(OB_PROP_DEPTH_EXPOSURE_INT));
     }
   }
   if (depth_gain_ != -1 &&
@@ -783,22 +1202,26 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "depth gain value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting depth gain to " << depth_gain_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_DEPTH_GAIN_INT, depth_gain_);
+      RCLCPP_INFO_STREAM(logger_,
+                         "Current depth gain: " << device_->getIntProperty(OB_PROP_DEPTH_GAIN_INT));
     }
   }
   if (sensors_.find(DEPTH) != sensors_.end() &&
       device_->isPropertySupported(OB_PROP_DEPTH_AUTO_EXPOSURE_PRIORITY_INT, OB_PERMISSION_WRITE)) {
     int set_enable_depth_auto_exposure_priority = enable_depth_auto_exposure_priority_ ? 1 : 0;
-    RCLCPP_INFO_STREAM(logger_, "Setting depth auto exposure priority to "
-                                    << (set_enable_depth_auto_exposure_priority ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_DEPTH_AUTO_EXPOSURE_PRIORITY_INT,
                         set_enable_depth_auto_exposure_priority);
+    RCLCPP_INFO_STREAM(
+        logger_,
+        "Current depth auto exposure priority: "
+            << (device_->getIntProperty(OB_PROP_DEPTH_AUTO_EXPOSURE_PRIORITY_INT) ? "ON" : "OFF"));
   }
   if (device_->isPropertySupported(OB_PROP_IR_AUTO_EXPOSURE_BOOL, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_,
-                       "Setting IR auto exposure to " << (enable_ir_auto_exposure_ ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_IR_AUTO_EXPOSURE_BOOL, enable_ir_auto_exposure_);
+    RCLCPP_INFO_STREAM(
+        logger_, "Current IR auto exposure: "
+                     << (device_->getBoolProperty(OB_PROP_IR_AUTO_EXPOSURE_BOOL) ? "ON" : "OFF"));
   }
   if (mean_intensity_set_point_ != -1 &&
       device_->isPropertySupported(OB_PROP_IR_BRIGHTNESS_INT, OB_PERMISSION_WRITE)) {
@@ -807,8 +1230,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "depth brightness value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting depth brightness to " << mean_intensity_set_point_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_IR_BRIGHTNESS_INT, mean_intensity_set_point_);
+      RCLCPP_INFO_STREAM(logger_, "Current depth brightness: "
+                                      << device_->getIntProperty(OB_PROP_IR_BRIGHTNESS_INT));
     }
   }
   // ir ae max
@@ -820,8 +1244,9 @@ void OBCameraNode::setupDevices() {
                    "IR AE max exposure value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting IR AE max exposure to " << ir_ae_max_exposure_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_IR_AE_MAX_EXPOSURE_INT, ir_ae_max_exposure_);
+      RCLCPP_INFO_STREAM(logger_, "Current IR AE max exposure: "
+                                      << device_->getIntProperty(OB_PROP_IR_AE_MAX_EXPOSURE_INT));
     }
   }
   // ir brightness
@@ -832,8 +1257,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "IR brightness value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting IR brightness to " << ir_brightness_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_IR_BRIGHTNESS_INT, ir_brightness_);
+      RCLCPP_INFO_STREAM(
+          logger_, "Current IR brightness: " << device_->getIntProperty(OB_PROP_IR_BRIGHTNESS_INT));
     }
   }
   if (ir_exposure_ != -1 &&
@@ -843,8 +1269,9 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "ir exposure value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting IR exposure to " << ir_exposure_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_IR_EXPOSURE_INT, ir_exposure_);
+      RCLCPP_INFO_STREAM(
+          logger_, "Current IR exposure: " << device_->getIntProperty(OB_PROP_IR_EXPOSURE_INT));
     }
   }
   if (ir_gain_ != -1 && device_->isPropertySupported(OB_PROP_IR_GAIN_INT, OB_PERMISSION_WRITE)) {
@@ -853,22 +1280,22 @@ void OBCameraNode::setupDevices() {
       RCLCPP_ERROR(logger_, "ir gain value is out of range[%d,%d], please check the value",
                    range.min, range.max);
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Setting IR gain to " << ir_gain_);
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_IR_GAIN_INT, ir_gain_);
+      RCLCPP_INFO_STREAM(logger_,
+                         "Current IR gain: " << device_->getIntProperty(OB_PROP_IR_GAIN_INT));
     }
   }
   if (device_->isPropertySupported(OB_PROP_IR_LONG_EXPOSURE_BOOL, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_,
-                       "Setting IR long exposure to " << (enable_ir_long_exposure_ ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_IR_LONG_EXPOSURE_BOOL, enable_ir_long_exposure_);
+    RCLCPP_INFO_STREAM(
+        logger_, "Current IR long exposure: "
+                     << (device_->getBoolProperty(OB_PROP_IR_LONG_EXPOSURE_BOOL) ? "ON" : "OFF"));
   }
 
-  if (sensors_.find(DEPTH) != sensors_.end() &&
+  if (enable_noise_removal_filter_ && sensors_.find(DEPTH) != sensors_.end() &&
       device_->isPropertySupported(OB_PROP_DEPTH_MAX_DIFF_INT, OB_PERMISSION_WRITE)) {
     auto default_noise_removal_filter_min_diff =
         device_->getIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT);
-    RCLCPP_INFO_STREAM(logger_, "default noise removal filter min diff: "
-                                    << default_noise_removal_filter_min_diff);
     if (noise_removal_filter_min_diff_ != -1 &&
         default_noise_removal_filter_min_diff != noise_removal_filter_min_diff_) {
       auto range = device_->getIntPropertyRange(OB_PROP_DEPTH_MAX_DIFF_INT);
@@ -880,20 +1307,16 @@ void OBCameraNode::setupDevices() {
                      range.min, range.max);
       } else {
         device_->setIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT, noise_removal_filter_min_diff_);
-        auto new_noise_removal_filter_min_diff =
-            device_->getIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT);
-        RCLCPP_INFO_STREAM(logger_, "after set noise removal filter min diff: "
-                                        << new_noise_removal_filter_min_diff);
       }
     }
+    RCLCPP_INFO_STREAM(logger_, "Current noise_removal_filter_min_diff: "
+                                    << device_->getIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT));
   }
 
-  if (sensors_.find(DEPTH) != sensors_.end() &&
+  if (enable_noise_removal_filter_ && sensors_.find(DEPTH) != sensors_.end() &&
       device_->isPropertySupported(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT, OB_PERMISSION_WRITE)) {
     auto default_noise_removal_filter_max_size =
         device_->getIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT);
-    RCLCPP_INFO_STREAM(logger_, "default noise removal filter max size: "
-                                    << default_noise_removal_filter_max_size);
     if (noise_removal_filter_max_size_ != -1 &&
         default_noise_removal_filter_max_size != noise_removal_filter_max_size_) {
       auto range = device_->getIntPropertyRange(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT);
@@ -905,16 +1328,19 @@ void OBCameraNode::setupDevices() {
                      range.min, range.max);
       } else {
         device_->setIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT, noise_removal_filter_max_size_);
-        auto new_noise_removal_filter_max_size =
-            device_->getIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT);
-        RCLCPP_INFO_STREAM(logger_, "after set noise removal filter max size: "
-                                        << new_noise_removal_filter_max_size);
       }
     }
+    RCLCPP_INFO_STREAM(logger_, "Current noise_removal_filter_max_size: "
+                                    << device_->getIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT));
+  }
+  if (sensors_.find(DEPTH) != sensors_.end() &&
+      device_->isPropertySupported(OB_PROP_DEPTH_SOFT_FILTER_BOOL, OB_PERMISSION_READ_WRITE)) {
+    device_->setBoolProperty(OB_PROP_DEPTH_SOFT_FILTER_BOOL, enable_noise_removal_filter_);
+    RCLCPP_INFO_STREAM(logger_, "Set noise removal filter to "
+                                    << (enable_noise_removal_filter_ ? "true" : "false"));
   }
   if (disparity_range_mode_ != -1 &&
       device_->isPropertySupported(OB_PROP_DISP_SEARCH_RANGE_MODE_INT, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting disparity range mode: " << disparity_range_mode_);
     if (disparity_range_mode_ == 64) {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_DISP_SEARCH_RANGE_MODE_INT, 0);
     } else if (disparity_range_mode_ == 128) {
@@ -924,27 +1350,34 @@ void OBCameraNode::setupDevices() {
     } else {
       RCLCPP_ERROR(logger_, "disparity range mode does not support this setting");
     }
+    const auto current_disparity_range_mode =
+        device_->getIntProperty(OB_PROP_DISP_SEARCH_RANGE_MODE_INT);
+    RCLCPP_INFO_STREAM(logger_, "Current disparity range mode: "
+                                    << disparityRangeModeToString(current_disparity_range_mode));
   }
   if (device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL,
                                    OB_PERMISSION_READ_WRITE)) {
     device_->setBoolProperty(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL,
                              enable_hardware_noise_removal_filter_);
-    RCLCPP_INFO_STREAM(logger_, "Setting hardware noise removal filter:"
-                                    << (enable_hardware_noise_removal_filter_ ? "ON" : "OFF"));
+    RCLCPP_INFO_STREAM(
+        logger_,
+        "Set hardware noise removal filter to "
+            << (device_->getBoolProperty(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL) ? "true"
+                                                                                     : "false"));
     if (device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT,
                                      OB_PERMISSION_READ_WRITE)) {
       if (hardware_noise_removal_filter_threshold_ != -1.0 &&
           enable_hardware_noise_removal_filter_) {
         device_->setFloatProperty(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT,
                                   hardware_noise_removal_filter_threshold_);
-        RCLCPP_INFO_STREAM(logger_, "Setting hardware noise removal filter threshold :"
-                                        << hardware_noise_removal_filter_threshold_);
+        RCLCPP_INFO_STREAM(logger_, "Current hardware noise removal filter threshold: "
+                                        << device_->getFloatProperty(
+                                               OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT));
       }
     }
   }
   if (exposure_range_mode_ != "default" &&
       device_->isPropertySupported(OB_PROP_DEVICE_PERFORMANCE_MODE_INT, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting exposure range mode : " << exposure_range_mode_);
     if (exposure_range_mode_ == "ultimate") {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_DEVICE_PERFORMANCE_MODE_INT, 1);
     } else if (exposure_range_mode_ == "regular") {
@@ -952,10 +1385,14 @@ void OBCameraNode::setupDevices() {
     } else {
       RCLCPP_ERROR(logger_, "exposure range mode does not support this setting");
     }
+    const auto current_exposure_range_mode =
+        device_->getIntProperty(OB_PROP_DEVICE_PERFORMANCE_MODE_INT);
+    RCLCPP_INFO_STREAM(logger_, "Current exposure range mode: "
+                                    << exposureRangeModeToString(current_exposure_range_mode));
   }
   if (!load_config_json_file_path_.empty()) {
     device_->loadPresetFromJsonFile(load_config_json_file_path_.c_str());
-    RCLCPP_INFO_STREAM(logger_, "Loading config json file path : " << load_config_json_file_path_);
+    RCLCPP_INFO_STREAM(logger_, "Loaded config json file path : " << load_config_json_file_path_);
   }
   if (!export_config_json_file_path_.empty()) {
     device_->exportSettingsAsPresetJsonFile(export_config_json_file_path_.c_str());
@@ -963,23 +1400,25 @@ void OBCameraNode::setupDevices() {
                        "Exporting config json file path : " << export_config_json_file_path_);
   }
   if (device_->isPropertySupported(OB_PROP_SDK_ACCEL_FRAME_TRANSFORMED_BOOL, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting accel data correction to "
-                                    << (enable_accel_data_correction_ ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_SDK_ACCEL_FRAME_TRANSFORMED_BOOL,
                         enable_accel_data_correction_);
+    RCLCPP_INFO_STREAM(
+        logger_,
+        "Current accel data correction: "
+            << (device_->getBoolProperty(OB_PROP_SDK_ACCEL_FRAME_TRANSFORMED_BOOL) ? "ON" : "OFF"));
   }
   if (device_->isPropertySupported(OB_PROP_SDK_GYRO_FRAME_TRANSFORMED_BOOL, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_, "Setting gyro data correction to "
-                                    << (enable_gyro_data_correction_ ? "ON" : "OFF"));
     TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_SDK_GYRO_FRAME_TRANSFORMED_BOOL,
                         enable_gyro_data_correction_);
+    RCLCPP_INFO_STREAM(
+        logger_,
+        "Current gyro data correction: "
+            << (device_->getBoolProperty(OB_PROP_SDK_GYRO_FRAME_TRANSFORMED_BOOL) ? "ON" : "OFF"));
   }
   if (isGemini335PID(pid_) && !intra_camera_sync_reference_.empty() &&
       (sync_mode_ == OB_MULTI_DEVICE_SYNC_MODE_SOFTWARE_TRIGGERING ||
        sync_mode_ == OB_MULTI_DEVICE_SYNC_MODE_HARDWARE_TRIGGERING) &&
       device_->isPropertySupported(OB_PROP_INTRA_CAMERA_SYNC_REFERENCE_INT, OB_PERMISSION_WRITE)) {
-    RCLCPP_INFO_STREAM(logger_,
-                       "Setting intra camera sync reference to " << intra_camera_sync_reference_);
     if (intra_camera_sync_reference_ == "Start") {
       TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_INTRA_CAMERA_SYNC_REFERENCE_INT, 0);
     } else if (intra_camera_sync_reference_ == "Middle") {
@@ -989,18 +1428,28 @@ void OBCameraNode::setupDevices() {
     } else {
       RCLCPP_ERROR(logger_, "intra camera sync reference does not support this setting");
     }
+    const auto current_intra_camera_sync_reference =
+        device_->getIntProperty(OB_PROP_INTRA_CAMERA_SYNC_REFERENCE_INT);
+    RCLCPP_INFO_STREAM(
+        logger_, "Current intra camera sync reference: "
+                     << intraCameraSyncReferenceToString(current_intra_camera_sync_reference));
   }
   if (device_->isPropertySupported(OB_PROP_DEVICE_AE_STRATEGY_INT, OB_PERMISSION_WRITE)) {
-    device_->setIntProperty(OB_PROP_DEVICE_AE_STRATEGY_INT, (enable_sports_mode_ ? 0 : 1));
-    RCLCPP_INFO_STREAM(logger_, "Setting Sports Mode to " << (enable_sports_mode_ ? "ON" : "OFF"));
+    device_->setIntProperty(OB_PROP_DEVICE_AE_STRATEGY_INT, (ae_strategy_ == "motion" ? 0 : 1));
+    RCLCPP_INFO_STREAM(
+        logger_, "Current Sports Mode: "
+                     << (device_->getIntProperty(OB_PROP_DEVICE_AE_STRATEGY_INT) == 0 ? "ON"
+                                                                                      : "OFF"));
   }
 
-  if ((ae_mode_ == "depthbased" || ae_mode_ == "colorbased") &&
+  if ((ae_reference_stream_ == "depth" || ae_reference_stream_ == "color") &&
       device_->isPropertySupported(OB_PROP_DEVICE_AE_REFERENCE_INT, OB_PERMISSION_WRITE)) {
     if (device_->isPropertySupported(OB_PROP_DEVICE_AE_REFERENCE_INT, OB_PERMISSION_WRITE)) {
-      auto ae_mode = ae_mode_ == "depthbased" ? 0 : 1;
-      device_->setIntProperty(OB_PROP_DEVICE_AE_REFERENCE_INT, ae_mode);
-      RCLCPP_INFO_STREAM(logger_, "Setting AE Mode to " << ae_mode_);
+      auto ae_reference = ae_reference_stream_ == "depth" ? 0 : 1;
+      device_->setIntProperty(OB_PROP_DEVICE_AE_REFERENCE_INT, ae_reference);
+      auto current_ae_reference = device_->getIntProperty(OB_PROP_DEVICE_AE_REFERENCE_INT);
+      RCLCPP_INFO_STREAM(logger_, "Current AE Reference: "
+                                      << (current_ae_reference == 0 ? "depthbased" : "colorbased"));
     }
   }
 }
@@ -1031,10 +1480,10 @@ void OBCameraNode::setupColorPostProcessFilter() {
         {"DecimationFilter", enable_color_decimation_filter_},
     };
     std::string filter_name = filter->type();
-    RCLCPP_INFO_STREAM(logger_, "Setting " << filter_name << "......");
+    RCLCPP_DEBUG_STREAM(logger_, "Configuring color filter: " << filter_name);
     if (filter_params.find(filter_name) != filter_params.end()) {
-      std::string value = filter_params[filter_name] ? "true" : "false";
-      RCLCPP_INFO_STREAM(logger_, "set color " << filter_name << " to " << value);
+      const auto *value = filter_params[filter_name] ? "enabled" : "disabled";
+      RCLCPP_INFO_STREAM(logger_, "Set color filter " << filter_name << " to " << value);
       filter->enable(filter_params[filter_name]);
     }
     if (filter_name == "DecimationFilter" && enable_color_decimation_filter_) {
@@ -1042,8 +1491,6 @@ void OBCameraNode::setupColorPostProcessFilter() {
       auto range = decimation_filter->getScaleRange();
       if (color_decimation_filter_scale_ != -1 && color_decimation_filter_scale_ <= range.max &&
           color_decimation_filter_scale_ >= range.min) {
-        RCLCPP_INFO_STREAM(logger_, "Set color decimation filter scale value to "
-                                        << color_decimation_filter_scale_);
         decimation_filter->setScaleValue(color_decimation_filter_scale_);
       }
       if (color_decimation_filter_scale_ != -1 && (color_decimation_filter_scale_ < range.min ||
@@ -1051,6 +1498,8 @@ void OBCameraNode::setupColorPostProcessFilter() {
         RCLCPP_ERROR_STREAM(logger_, "Color Decimation filter scale value is out of range "
                                          << range.min << " - " << range.max);
       }
+      RCLCPP_INFO_STREAM(logger_, "Current color decimation filter scale value: "
+                                      << static_cast<int>(decimation_filter->getScaleValue()));
     }
   }
 
@@ -1060,10 +1509,10 @@ void OBCameraNode::setupColorPostProcessFilter() {
         {"DecimationFilter", enable_left_color_decimation_filter_},
     };
     std::string filter_name = filter->type();
-    RCLCPP_INFO_STREAM(logger_, "Setting left " << filter_name << "......");
+    RCLCPP_DEBUG_STREAM(logger_, "Configuring left color filter: " << filter_name);
     if (filter_params.find(filter_name) != filter_params.end()) {
-      std::string value = filter_params[filter_name] ? "true" : "false";
-      RCLCPP_INFO_STREAM(logger_, "set left color " << filter_name << " to " << value);
+      const auto *value = filter_params[filter_name] ? "enabled" : "disabled";
+      RCLCPP_INFO_STREAM(logger_, "Set left color filter " << filter_name << " to " << value);
       filter->enable(filter_params[filter_name]);
     }
     if (filter_name == "DecimationFilter" && enable_left_color_decimation_filter_) {
@@ -1072,8 +1521,6 @@ void OBCameraNode::setupColorPostProcessFilter() {
       if (left_color_decimation_filter_scale_ != -1 &&
           left_color_decimation_filter_scale_ <= range.max &&
           left_color_decimation_filter_scale_ >= range.min) {
-        RCLCPP_INFO_STREAM(logger_, "Set left color decimation filter scale value to "
-                                        << left_color_decimation_filter_scale_);
         decimation_filter->setScaleValue(left_color_decimation_filter_scale_);
       }
       if (left_color_decimation_filter_scale_ != -1 &&
@@ -1082,6 +1529,8 @@ void OBCameraNode::setupColorPostProcessFilter() {
         RCLCPP_ERROR_STREAM(logger_, "Left Color Decimation filter scale value is out of range "
                                          << range.min << " - " << range.max);
       }
+      RCLCPP_INFO_STREAM(logger_, "Current left color decimation filter scale value: "
+                                      << static_cast<int>(decimation_filter->getScaleValue()));
     }
   }
 
@@ -1091,10 +1540,10 @@ void OBCameraNode::setupColorPostProcessFilter() {
         {"DecimationFilter", enable_right_color_decimation_filter_},
     };
     std::string filter_name = filter->type();
-    RCLCPP_INFO_STREAM(logger_, "Setting right " << filter_name << "......");
+    RCLCPP_DEBUG_STREAM(logger_, "Configuring right color filter: " << filter_name);
     if (filter_params.find(filter_name) != filter_params.end()) {
-      std::string value = filter_params[filter_name] ? "true" : "false";
-      RCLCPP_INFO_STREAM(logger_, "set right color " << filter_name << " to " << value);
+      const auto *value = filter_params[filter_name] ? "enabled" : "disabled";
+      RCLCPP_INFO_STREAM(logger_, "Set right color filter " << filter_name << " to " << value);
       filter->enable(filter_params[filter_name]);
     }
     if (filter_name == "DecimationFilter" && enable_right_color_decimation_filter_) {
@@ -1103,8 +1552,6 @@ void OBCameraNode::setupColorPostProcessFilter() {
       if (right_color_decimation_filter_scale_ != -1 &&
           right_color_decimation_filter_scale_ <= range.max &&
           right_color_decimation_filter_scale_ >= range.min) {
-        RCLCPP_INFO_STREAM(logger_, "Set right color decimation filter scale value to "
-                                        << right_color_decimation_filter_scale_);
         decimation_filter->setScaleValue(right_color_decimation_filter_scale_);
       }
       if (right_color_decimation_filter_scale_ != -1 &&
@@ -1113,6 +1560,8 @@ void OBCameraNode::setupColorPostProcessFilter() {
         RCLCPP_ERROR_STREAM(logger_, "Right Color Decimation filter scale value is out of range "
                                          << range.min << " - " << range.max);
       }
+      RCLCPP_INFO_STREAM(logger_, "Current right color decimation filter scale value: "
+                                      << static_cast<int>(decimation_filter->getScaleValue()));
     }
   }
   auto device_info = device_->getDeviceInfo();
@@ -1125,8 +1574,6 @@ void OBCameraNode::setupColorPostProcessFilter() {
       auto range = decimation_filter->getScaleRange();
       if (color_decimation_filter_scale_ != -1 && color_decimation_filter_scale_ <= range.max &&
           color_decimation_filter_scale_ >= range.min) {
-        RCLCPP_INFO_STREAM(logger_, "Set color decimation filter scale value to "
-                                        << color_decimation_filter_scale_);
         decimation_filter->setScaleValue(color_decimation_filter_scale_);
       }
       if (color_decimation_filter_scale_ != -1 && (color_decimation_filter_scale_ < range.min ||
@@ -1134,6 +1581,8 @@ void OBCameraNode::setupColorPostProcessFilter() {
         RCLCPP_ERROR_STREAM(logger_, "Color Decimation filter scale value is out of range "
                                          << range.min << " - " << range.max);
       }
+      RCLCPP_INFO_STREAM(logger_, "Current color decimation filter scale value: "
+                                      << static_cast<int>(decimation_filter->getScaleValue()));
     }
   }
 }
@@ -1153,19 +1602,19 @@ void OBCameraNode::setupLeftIrPostProcessFilter() {
           {"SequenceIdFilter", enable_left_ir_sequence_id_filter_},
       };
       std::string filter_name = filter->type();
-      RCLCPP_INFO_STREAM(logger_, "Setting " << filter_name << "......");
+      RCLCPP_DEBUG_STREAM(logger_, "Configuring left IR filter: " << filter_name);
       if (filter_params.find(filter_name) != filter_params.end()) {
-        std::string value = filter_params[filter_name] ? "true" : "false";
-        RCLCPP_INFO_STREAM(logger_, "set left ir " << filter_name << " to " << value);
+        const auto *value = filter_params[filter_name] ? "enabled" : "disabled";
+        RCLCPP_INFO_STREAM(logger_, "Set left IR filter " << filter_name << " to " << value);
         filter->enable(filter_params[filter_name]);
       }
       if (filter_name == "SequenceIdFilter" && enable_left_ir_sequence_id_filter_) {
         auto sequenced_filter = filter->as<ob::SequenceIdFilter>();
         if (left_ir_sequence_id_filter_id_ != -1) {
           sequenced_filter->selectSequenceId(left_ir_sequence_id_filter_id_);
-          RCLCPP_INFO_STREAM(
-              logger_, "Set left ir SequenceIdFilter ID to " << left_ir_sequence_id_filter_id_);
         }
+        RCLCPP_INFO_STREAM(logger_, "Current left ir SequenceIdFilter ID: "
+                                        << sequenced_filter->getSelectSequenceId());
       }
     }
   }
@@ -1187,19 +1636,19 @@ void OBCameraNode::setupRightIrPostProcessFilter() {
           {"SequenceIdFilter", enable_right_ir_sequence_id_filter_},
       };
       std::string filter_name = filter->type();
-      RCLCPP_INFO_STREAM(logger_, "Setting " << filter_name << "......");
+      RCLCPP_DEBUG_STREAM(logger_, "Configuring right IR filter: " << filter_name);
       if (filter_params.find(filter_name) != filter_params.end()) {
-        std::string value = filter_params[filter_name] ? "true" : "false";
-        RCLCPP_INFO_STREAM(logger_, "set right ir " << filter_name << " to " << value);
+        const auto *value = filter_params[filter_name] ? "enabled" : "disabled";
+        RCLCPP_INFO_STREAM(logger_, "Set right IR filter " << filter_name << " to " << value);
         filter->enable(filter_params[filter_name]);
       }
       if (filter_name == "SequenceIdFilter" && enable_right_ir_sequence_id_filter_) {
         auto sequenced_filter = filter->as<ob::SequenceIdFilter>();
         if (right_ir_sequence_id_filter_id_ != -1) {
           sequenced_filter->selectSequenceId(right_ir_sequence_id_filter_id_);
-          RCLCPP_INFO_STREAM(
-              logger_, "Set right ir SequenceIdFilter ID to " << right_ir_sequence_id_filter_id_);
         }
+        RCLCPP_INFO_STREAM(logger_, "Current right ir SequenceIdFilter ID: "
+                                        << sequenced_filter->getSelectSequenceId());
       }
     }
   }
@@ -1212,26 +1661,29 @@ void OBCameraNode::setupDepthPostProcessFilter() {
     RCLCPP_WARN_STREAM(logger_, "Failed to get depth sensor filter list");
     return;
   }
+  std::map<std::string, bool> filter_params = {
+      {"DecimationFilter", enable_decimation_filter_},
+      {"HDRMerge", enable_hdr_merge_},
+      {"SequenceIdFilter", enable_sequence_id_filter_},
+      {"SpatialAdvancedFilter", enable_spatial_filter_},
+      {"TemporalFilter", enable_temporal_filter_},
+      {"HoleFillingFilter", enable_hole_filling_filter_},
+      {"DisparityTransform", enable_disparity_to_depth_},
+      {"ThresholdFilter", enable_threshold_filter_},
+      {"SpatialFastFilter", enable_spatial_fast_filter_},
+      {"SpatialModerateFilter", enable_spatial_moderate_filter_},
+      {"FalsePositiveFilter", enable_false_positive_filter_},
+      {"MgcNoiseRemovalFilter", enable_mgc_noise_removal_filter_},
+      {"LutNoiseRemovalFilter", enable_lut_noise_removal_filter_},
+  };
+
   for (size_t i = 0; i < depth_filter_list_.size(); i++) {
     auto filter = depth_filter_list_[i];
-    std::map<std::string, bool> filter_params = {
-        {"DecimationFilter", enable_decimation_filter_},
-        {"HDRMerge", enable_hdr_merge_},
-        {"SequenceIdFilter", enable_sequence_id_filter_},
-        {"SpatialAdvancedFilter", enable_spatial_filter_},
-        {"TemporalFilter", enable_temporal_filter_},
-        {"HoleFillingFilter", enable_hole_filling_filter_},
-        {"DisparityTransform", enable_disparity_to_depth_},
-        {"ThresholdFilter", enable_threshold_filter_},
-        {"SpatialFastFilter", enable_spatial_fast_filter_},
-        {"SpatialModerateFilter", enable_spatial_moderate_filter_},
-        {"FalsePositiveFilter", enable_false_positive_filter_},
-    };
     std::string filter_name = filter->type();
-    RCLCPP_INFO_STREAM(logger_, "Setting " << filter_name << "......");
+    RCLCPP_DEBUG_STREAM(logger_, "Configuring depth filter: " << filter_name);
     if (filter_params.find(filter_name) != filter_params.end()) {
-      std::string value = filter_params[filter_name] ? "true" : "false";
-      RCLCPP_INFO_STREAM(logger_, "set " << filter_name << " to " << value);
+      const auto *value = filter_params[filter_name] ? "enabled" : "disabled";
+      RCLCPP_INFO_STREAM(logger_, "Set depth filter " << filter_name << " to " << value);
       filter->enable(filter_params[filter_name]);
       filter_status_[filter_name] = filter_params[filter_name];
     }
@@ -1240,8 +1692,6 @@ void OBCameraNode::setupDepthPostProcessFilter() {
       auto range = decimation_filter->getScaleRange();
       if (decimation_filter_scale_ != -1 && decimation_filter_scale_ <= range.max &&
           decimation_filter_scale_ >= range.min) {
-        RCLCPP_INFO_STREAM(logger_,
-                           "Set decimation filter scale value to " << decimation_filter_scale_);
         decimation_filter->setScaleValue(decimation_filter_scale_);
       }
       if (decimation_filter_scale_ != -1 &&
@@ -1249,13 +1699,17 @@ void OBCameraNode::setupDepthPostProcessFilter() {
         RCLCPP_ERROR_STREAM(logger_, "Decimation filter scale value is out of range "
                                          << range.min << " - " << range.max);
       }
+      RCLCPP_INFO_STREAM(logger_, "Current decimation filter scale value: "
+                                      << static_cast<int>(decimation_filter->getScaleValue()));
     } else if (filter_name == "ThresholdFilter" && enable_threshold_filter_) {
       auto threshold_filter = filter->as<ob::ThresholdFilter>();
       if (threshold_filter_min_ != -1 && threshold_filter_max_ != -1) {
-        RCLCPP_INFO_STREAM(logger_, "Set threshold filter value range to "
-                                        << threshold_filter_min_ << " - " << threshold_filter_max_);
         threshold_filter->setValueRange(threshold_filter_min_, threshold_filter_max_);
       }
+      RCLCPP_INFO_STREAM(logger_, "Current threshold filter value range: "
+                                      << static_cast<int>(threshold_filter->getConfigValue("min"))
+                                      << " - "
+                                      << static_cast<int>(threshold_filter->getConfigValue("max")));
     } else if (filter_name == "SpatialAdvancedFilter" && enable_spatial_filter_) {
       auto spatial_filter = filter->as<ob::SpatialAdvancedFilter>();
       if (spatial_filter_alpha_ != -1.0 && spatial_filter_magnitude_ != -1 &&
@@ -1267,15 +1721,23 @@ void OBCameraNode::setupDepthPostProcessFilter() {
         params.disp_diff = spatial_filter_diff_threshold_;
         spatial_filter->setFilterParams(params);
       }
+      auto current_params = spatial_filter->getFilterParams();
+      RCLCPP_INFO_STREAM(logger_, "Current SpatialFilter params: "
+                                      << "alpha=" << current_params.alpha << ", disp_diff="
+                                      << current_params.disp_diff << ", magnitude="
+                                      << static_cast<int>(current_params.magnitude)
+                                      << ", radius=" << current_params.radius);
     } else if (filter_name == "TemporalFilter" && enable_temporal_filter_) {
       auto temporal_filter = filter->as<ob::TemporalFilter>();
       if (temporal_filter_diff_threshold_ != -1.0 && temporal_filter_weight_ != -1.0) {
-        RCLCPP_INFO_STREAM(logger_, "Set temporal filter value to "
-                                        << temporal_filter_diff_threshold_ << " - "
-                                        << temporal_filter_weight_);
         temporal_filter->setDiffScale(temporal_filter_diff_threshold_);
         temporal_filter->setWeight(temporal_filter_weight_);
       }
+      RCLCPP_INFO_STREAM(
+          logger_,
+          "Current TemporalFilter params: "
+              << "diff_scale=" << static_cast<float>(temporal_filter->getConfigValue("diff_scale"))
+              << ", weight=" << static_cast<float>(temporal_filter->getConfigValue("weight")));
     } else if (filter_name == "HoleFillingFilter" && enable_hole_filling_filter_ &&
                !hole_filling_filter_mode_.empty()) {
       auto hole_filling_filter = filter->as<ob::HoleFillingFilter>();
@@ -1283,21 +1745,20 @@ void OBCameraNode::setupDepthPostProcessFilter() {
                          "Default hole filling filter mode: " << hole_filling_filter_mode_);
       OBHoleFillingMode hole_filling_mode = holeFillingModeFromString(hole_filling_filter_mode_);
       hole_filling_filter->setFilterMode(hole_filling_mode);
+      RCLCPP_INFO_STREAM(logger_, "Current HoleFillingFilter mode: "
+                                      << static_cast<int>(hole_filling_filter->getFilterMode()));
     } else if (filter_name == "SequenceIdFilter" && enable_sequence_id_filter_) {
       auto sequenced_filter = filter->as<ob::SequenceIdFilter>();
       if (sequence_id_filter_id_ != -1) {
         sequenced_filter->selectSequenceId(sequence_id_filter_id_);
       }
+      RCLCPP_INFO_STREAM(
+          logger_, "Current SequenceIdFilter ID: " << sequenced_filter->getSelectSequenceId());
     } else if (filter_name == "HDRMerge" && enable_hdr_merge_) {
       if (hdr_merge_exposure_1_ != -1 && hdr_merge_gain_1_ != -1 && hdr_merge_exposure_2_ != -1 &&
           hdr_merge_gain_2_ != -1) {
         auto hdr_merge_filter = filter->as<ob::HdrMerge>();
         hdr_merge_filter->enable(true);
-        RCLCPP_INFO_STREAM(logger_, "Set HDR merge filter params: "
-                                        << "exposure_1: " << hdr_merge_exposure_1_
-                                        << ", gain_1: " << hdr_merge_gain_1_
-                                        << ", exposure_2: " << hdr_merge_exposure_2_
-                                        << ", gain_2: " << hdr_merge_gain_2_);
         auto config = OBHdrConfig();
         config.enable = true;
         config.exposure_1 = hdr_merge_exposure_1_;
@@ -1306,16 +1767,24 @@ void OBCameraNode::setupDepthPostProcessFilter() {
         config.gain_2 = hdr_merge_gain_2_;
         device_->setStructuredData(OB_STRUCT_DEPTH_HDR_CONFIG,
                                    reinterpret_cast<const uint8_t *>(&config), sizeof(config));
+        uint32_t config_size = sizeof(config);
+        device_->getStructuredData(OB_STRUCT_DEPTH_HDR_CONFIG, reinterpret_cast<uint8_t *>(&config),
+                                   &config_size);
+        RCLCPP_INFO_STREAM(
+            logger_, "Current HDRMerge params: "
+                         << "exposure_1=" << config.exposure_1 << ", gain_1=" << config.gain_1
+                         << ", exposure_2=" << config.exposure_2 << ", gain_2=" << config.gain_2);
       }
     } else if (filter_name == "SpatialFastFilter" && enable_spatial_fast_filter_) {
       auto spatial_fast_filter = filter->as<ob::SpatialFastFilter>();
       OBSpatialFastFilterParams params{};
       if (spatial_fast_filter_radius_ != -1) {
         params.radius = spatial_fast_filter_radius_;
-        RCLCPP_INFO_STREAM(logger_,
-                           "Set SpatialFastFilter radius to " << spatial_fast_filter_radius_);
         spatial_fast_filter->setFilterParams(params);
       }
+      auto current_params = spatial_fast_filter->getFilterParams();
+      RCLCPP_INFO_STREAM(
+          logger_, "Current SpatialFastFilter radius: " << static_cast<int>(current_params.radius));
     } else if (filter_name == "SpatialModerateFilter" && enable_spatial_moderate_filter_) {
       auto spatial_moderate_filter = filter->as<ob::SpatialModerateFilter>();
       OBSpatialModerateFilterParams params{};
@@ -1324,14 +1793,16 @@ void OBCameraNode::setupDepthPostProcessFilter() {
         params.magnitude = spatial_moderate_filter_magnitude_;
         params.radius = spatial_moderate_filter_radius_;
         params.disp_diff = spatial_moderate_filter_diff_threshold_;
-        RCLCPP_INFO_STREAM(logger_, "Set SpatialModerateFilter params: "
-                                        << "magnitude=" << params.magnitude << ", radius="
-                                        << params.radius << ", disp_diff=" << params.disp_diff);
         spatial_moderate_filter->setFilterParams(params);
       }
+      auto current_params = spatial_moderate_filter->getFilterParams();
+      RCLCPP_INFO_STREAM(logger_, "Current SpatialModerateFilter params: "
+                                      << "disp_diff=" << current_params.disp_diff << ", magnitude="
+                                      << static_cast<int>(current_params.magnitude)
+                                      << ", radius=" << static_cast<int>(current_params.radius));
 
     } else {
-      RCLCPP_INFO_STREAM(logger_, "Skip setting filter: " << filter_name);
+      RCLCPP_DEBUG_STREAM(logger_, "Skip setting filter: " << filter_name);
     }
   }
   auto device_info = device_->getDeviceInfo();
@@ -1344,8 +1815,6 @@ void OBCameraNode::setupDepthPostProcessFilter() {
       auto range = decimation_filter->getScaleRange();
       if (decimation_filter_scale_ != -1 && decimation_filter_scale_ <= range.max &&
           decimation_filter_scale_ >= range.min) {
-        RCLCPP_INFO_STREAM(logger_,
-                           "Set decimation filter scale value to " << decimation_filter_scale_);
         decimation_filter->setScaleValue(decimation_filter_scale_);
       }
       if (decimation_filter_scale_ != -1 &&
@@ -1353,6 +1822,8 @@ void OBCameraNode::setupDepthPostProcessFilter() {
         RCLCPP_ERROR_STREAM(logger_, "Decimation filter scale value is out of range "
                                          << range.min << " - " << range.max);
       }
+      RCLCPP_INFO_STREAM(logger_, "Current decimation filter scale value: "
+                                      << static_cast<int>(decimation_filter->getScaleValue()));
     }
   }
   set_filter_srv_ = node_->create_service<SetFilter>(
@@ -1447,19 +1918,19 @@ void OBCameraNode::setupProfiles() {
             format_[elem] == OB_FORMAT_UNKNOWN) {
           selected_profile = profiles->getProfile(0)->as<ob::VideoStreamProfile>();
         } else {
-          if (pid_ == GEMINI_305_PID && elem == DEPTH) {
+          if (isGemini305SeriesPID(pid_) && elem == DEPTH) {
             OBHardwareDecimationConfig conf;
             conf.originWidth = width_[elem];
             conf.originHeight = height_[elem];
             conf.factor = depth_decimation_factor_;
             selected_profile = profiles->getVideoStreamProfile(conf, format_[elem], fps_[elem]);
-          } else if (pid_ == GEMINI_305_PID && elem == INFRA1) {
+          } else if (isGemini305SeriesPID(pid_) && elem == INFRA1) {
             OBHardwareDecimationConfig conf;
             conf.originWidth = width_[elem];
             conf.originHeight = height_[elem];
             conf.factor = left_ir_decimation_factor_;
             selected_profile = profiles->getVideoStreamProfile(conf, format_[elem], fps_[elem]);
-          } else if (pid_ == GEMINI_305_PID && elem == INFRA2) {
+          } else if (isGemini305SeriesPID(pid_) && elem == INFRA2) {
             OBHardwareDecimationConfig conf;
             conf.originWidth = width_[elem];
             conf.originHeight = height_[elem];
@@ -1484,25 +1955,24 @@ void OBCameraNode::setupProfiles() {
                      "configuration and try again. The current process will now exit.");
         RCLCPP_INFO_STREAM(logger_, "Available profiles:");
         printSensorProfiles(sensor);
-        RCLCPP_ERROR(logger_, "Because can not set this stream, so exit.");
+        RCLCPP_ERROR(logger_, "Failed to configure the requested stream profile, exiting.");
         exit(-1);
       }
 
       if (!selected_profile) {
-        RCLCPP_WARN_STREAM(logger_, "Given stream configuration is not supported by the device! "
-                                        << " Stream: " << magic_enum::enum_name(elem.first)
-                                        << ", Stream Index: " << elem.second
-                                        << ", Width: " << width_[elem]
-                                        << ", Height: " << height_[elem] << ", FPS: " << fps_[elem]
-                                        << ", Format: " << magic_enum::enum_name(format_[elem]));
+        RCLCPP_WARN_STREAM(logger_,
+                           "Requested stream configuration is not supported by the device: "
+                               << "stream=" << magic_enum::enum_name(elem.first)
+                               << ", stream_index=" << elem.second << ", width=" << width_[elem]
+                               << ", height=" << height_[elem] << ", fps=" << fps_[elem]
+                               << ", format=" << magic_enum::enum_name(format_[elem]));
         if (default_profile) {
-          RCLCPP_WARN_STREAM(logger_, "Using default profile instead.");
-          RCLCPP_WARN_STREAM(logger_, "default FPS " << default_profile->getFps());
+          RCLCPP_WARN_STREAM(logger_, "Using the default profile instead");
+          RCLCPP_WARN_STREAM(logger_, "Default profile FPS: " << default_profile->getFps());
           selected_profile = default_profile;
         } else {
-          RCLCPP_ERROR_STREAM(
-              logger_, " NO default_profile found , Stream: " << magic_enum::enum_name(elem.first)
-                                                              << " will be disable");
+          RCLCPP_ERROR_STREAM(logger_, "No default profile found, disabling stream "
+                                           << magic_enum::enum_name(elem.first));
           enable_stream_[elem] = false;
           continue;
         }
@@ -1550,8 +2020,9 @@ void OBCameraNode::setupProfiles() {
                                             << imu_range_[stream_index] << " sample rate "
                                             << imu_rate_[stream_index]);
     } catch (const ob::Error &e) {
-      RCLCPP_INFO_STREAM(logger_, "Failed to setup << " << stream_name_[stream_index]
-                                                        << " profile: " << e.getMessage());
+      RCLCPP_INFO_STREAM(logger_, "Failed to setup << "
+                                      << stream_name_[stream_index]
+                                      << " profile: " << orbbec_camera::formatObErrorWithStatus(e));
       enable_stream_[stream_index] = false;
       stream_profile_[stream_index] = nullptr;
     }
@@ -1635,7 +2106,8 @@ void OBCameraNode::startStreams() {
       onNewFrameSetCallback(frame_set);
     });
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to start pipeline: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(logger_,
+                        "Failed to start pipeline: " << orbbec_camera::formatObErrorWithStatus(e));
     RCLCPP_INFO_STREAM(logger_, "try to disable ir stream and try again");
     enable_stream_[INFRA0] = false;
     setupPipelineConfig();
@@ -1667,15 +2139,15 @@ void OBCameraNode::startStreams() {
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
   // set interleave mode
   if (interleave_ae_mode_ == "hdr" && interleave_frame_enable_) {
-    RCLCPP_INFO_STREAM(logger_, "Setting interleave mode to hdr");
+    RCLCPP_INFO_STREAM(logger_, "Set interleave mode to hdr");
     device_->loadFrameInterleave("Depth from HDR");
     init_interleave_hdr_param();
   } else if (interleave_ae_mode_ == "laser" && interleave_frame_enable_) {
-    RCLCPP_INFO_STREAM(logger_, "Setting interleave mode to laser");
+    RCLCPP_INFO_STREAM(logger_, "Set interleave mode to laser");
     device_->loadFrameInterleave("Laser On-Off");
     init_interleave_laser_param();
   } else {
-    RCLCPP_INFO_STREAM(logger_, "Setting interleave mode to nothing");
+    RCLCPP_DEBUG_STREAM(logger_, "Set interleave mode to nothing");
   }
   // enable interleave frame
   if ((interleave_ae_mode_ == "hdr") || (interleave_ae_mode_ == "laser")) {
@@ -1683,8 +2155,11 @@ void OBCameraNode::startStreams() {
     if (device_->isPropertySupported(OB_PROP_FRAME_INTERLEAVE_ENABLE_BOOL, OB_PERMISSION_WRITE)) {
       TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_FRAME_INTERLEAVE_ENABLE_BOOL,
                           interleave_frame_enable_);
-      RCLCPP_INFO_STREAM(logger_, "Enable enable_interleave_depth_frame to "
-                                      << (interleave_frame_enable_ ? "true" : "false"));
+      RCLCPP_INFO_STREAM(
+          logger_,
+          "Enable enable_interleave_depth_frame to "
+              << (device_->getBoolProperty(OB_PROP_FRAME_INTERLEAVE_ENABLE_BOOL) ? "true"
+                                                                                 : "false"));
     }
   }
   // set interleave larse PATTERN_SYNC_DELAY
@@ -1694,7 +2169,9 @@ void OBCameraNode::startStreams() {
       (sync_mode_str_ == "PRIMARY" || sync_mode_str_ == "SOFTWARE_TRIGGERING")) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     TRY_TO_SET_PROPERTY(setIntProperty, OB_PROP_FRAME_INTERLEAVE_LASER_PATTERN_SYNC_DELAY_INT, 0);
-    RCLCPP_INFO_STREAM(logger_, "Setting OB_PROP_FRAME_INTERLEAVE_LASER_PATTERN_SYNC_DELAY_INT 0 ");
+    RCLCPP_INFO_STREAM(logger_,
+                       "Current interleave laser pattern sync delay: " << device_->getIntProperty(
+                           OB_PROP_FRAME_INTERLEAVE_LASER_PATTERN_SYNC_DELAY_INT));
   }
   pipeline_started_.store(true);
 }
@@ -1742,7 +2219,8 @@ void OBCameraNode::startIMUSyncStream() {
                                                    << fullGyroScaleRangeToString(gyro_range)
                                                    << ",rate:" << sampleRateToString(gyro_rate));
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to start IMU sync stream: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(
+        logger_, "Failed to start IMU sync stream: " << orbbec_camera::formatObErrorWithStatus(e));
     imu_sync_output_start_ = false;
   } catch (...) {
     RCLCPP_ERROR_STREAM(
@@ -1774,7 +2252,7 @@ void OBCameraNode::stopStreams() {
   std::lock_guard<decltype(device_lock_)> lock(device_lock_);
 
   if (!pipeline_started_ || !pipeline_) {
-    RCLCPP_INFO_STREAM(logger_, "pipeline not started or not exist, skip stop pipeline");
+    RCLCPP_DEBUG_STREAM(logger_, "pipeline not started or not exist, skip stop pipeline");
     return;
   }
 
@@ -1802,18 +2280,18 @@ void OBCameraNode::stopStreams() {
       // disable interleave frame only if device is still connected
       if ((interleave_ae_mode_ == "hdr") || (interleave_ae_mode_ == "laser")) {
         try {
-          RCLCPP_INFO_STREAM(logger_, "current interleave_ae_mode_: " << interleave_ae_mode_);
+          RCLCPP_DEBUG_STREAM(logger_, "Current interleave AE mode: " << interleave_ae_mode_);
           if (device_->isPropertySupported(OB_PROP_FRAME_INTERLEAVE_ENABLE_BOOL,
                                            OB_PERMISSION_WRITE)) {
             interleave_frame_enable_ = false;
-            RCLCPP_INFO_STREAM(logger_, "Enable enable_interleave_depth_frame to "
-                                            << (interleave_frame_enable_ ? "true" : "false"));
+            RCLCPP_DEBUG_STREAM(logger_, "Set enable_interleave_depth_frame to "
+                                             << (interleave_frame_enable_ ? "true" : "false"));
             TRY_TO_SET_PROPERTY(setBoolProperty, OB_PROP_FRAME_INTERLEAVE_ENABLE_BOOL,
                                 interleave_frame_enable_);
           }
         } catch (const ob::Error &e) {
-          RCLCPP_WARN_STREAM(
-              logger_, "Failed to disable interleave frame during shutdown: " << e.getMessage());
+          RCLCPP_WARN_STREAM(logger_, "Failed to disable interleave frame during shutdown: "
+                                          << orbbec_camera::formatObErrorWithStatus(e));
         } catch (...) {
           RCLCPP_WARN_STREAM(logger_, "Failed to disable interleave frame during shutdown");
         }
@@ -1823,7 +2301,8 @@ void OBCameraNode::stopStreams() {
                          "Device or pipeline not available during stop - likely disconnected");
     }
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to stop pipeline: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(logger_,
+                        "Failed to stop pipeline: " << orbbec_camera::formatObErrorWithStatus(e));
   } catch (...) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to stop pipeline");
   }
@@ -1834,13 +2313,15 @@ void OBCameraNode::stopIMU() {
 
   if (enable_sync_output_accel_gyro_) {
     if (!imu_sync_output_start_ || !imuPipeline_) {
-      RCLCPP_INFO_STREAM(logger_, "imu pipeline not started or not exist, skip stop imu pipeline");
+      RCLCPP_DEBUG_STREAM(logger_,
+                          "IMU pipeline not started or unavailable, skip stopping IMU pipeline");
       return;
     }
     try {
       imuPipeline_->stop();
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_, "Failed to stop imu pipeline: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(
+          logger_, "Failed to stop imu pipeline: " << orbbec_camera::formatObErrorWithStatus(e));
     } catch (...) {
       RCLCPP_ERROR_STREAM(logger_, "Failed to stop imu pipeline");
     }
@@ -1849,12 +2330,13 @@ void OBCameraNode::stopIMU() {
     for (const auto &stream_index : HID_STREAMS) {
       if (imu_started_[stream_index]) {
         CHECK(sensors_.count(stream_index));
-        RCLCPP_INFO_STREAM(logger_, "stop " << stream_name_[stream_index] << " stream");
+        RCLCPP_DEBUG_STREAM(logger_, "Stop " << stream_name_[stream_index] << " stream");
         try {
           sensors_[stream_index]->stop();
         } catch (const ob::Error &e) {
-          RCLCPP_ERROR_STREAM(logger_, "Failed to stop " << stream_name_[stream_index]
-                                                         << " stream: " << e.getMessage());
+          RCLCPP_ERROR_STREAM(logger_, "Failed to stop "
+                                           << stream_name_[stream_index] << " stream: "
+                                           << orbbec_camera::formatObErrorWithStatus(e));
         }
         imu_started_[stream_index] = false;
       }
@@ -2062,6 +2544,7 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<int>(color_gain_, "color_gain", -1);
   setAndGetNodeParameter<int>(color_white_balance_, "color_white_balance", -1);
   setAndGetNodeParameter<int>(color_ae_max_exposure_, "color_ae_max_exposure", -1);
+  setAndGetNodeParameter<int>(color_ae_max_gain_, "color_ae_max_gain", -1);
   setAndGetNodeParameter<int>(color_brightness_, "color_brightness", -1);
   setAndGetNodeParameter<int>(color_roi_brightness_, "color_roi_brightness", -1);
   setAndGetNodeParameter<int>(color_sharpness_, "color_sharpness", -1);
@@ -2070,6 +2553,7 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<int>(color_contrast_, "color_contrast", -1);
   setAndGetNodeParameter<int>(color_hue_, "color_hue", -1);
   setAndGetNodeParameter<int>(color_backlight_compensation_, "color_backlight_compensation", -1);
+  setAndGetNodeParameter<bool>(color_anti_flicker_, "color_anti_flicker", false);
   setAndGetNodeParameter<int>(color_denoising_level_, "color_denoising_level", -1);
   setAndGetNodeParameter<std::string>(color_powerline_freq_, "color_powerline_freq", "");
   setAndGetNodeParameter<std::string>(color_preset_, "color_preset", "Default");
@@ -2156,6 +2640,10 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<bool>(enable_spatial_fast_filter_, "enable_spatial_fast_filter", false);
   setAndGetNodeParameter<bool>(enable_spatial_moderate_filter_, "enable_spatial_moderate_filter",
                                false);
+  setAndGetNodeParameter<bool>(enable_mgc_noise_removal_filter_, "enable_mgc_noise_removal_filter",
+                               false);
+  setAndGetNodeParameter<bool>(enable_lut_noise_removal_filter_, "enable_lut_noise_removal_filter",
+                               false);
   setAndGetNodeParameter<int>(decimation_filter_scale_, "decimation_filter_scale", -1);
   setAndGetNodeParameter<int>(sequence_id_filter_id_, "sequence_id_filter_id", -1);
   setAndGetNodeParameter<int>(threshold_filter_max_, "threshold_filter_max", -1);
@@ -2190,8 +2678,11 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<int>(min_depth_limit_, "min_depth_limit", 0);
   setAndGetNodeParameter<int>(max_depth_limit_, "max_depth_limit", 0);
   setAndGetNodeParameter<bool>(enable_heartbeat_, "enable_heartbeat", false);
+  setAndGetNodeParameter<bool>(enable_firmware_log_, "enable_firmware_log", false);
   setAndGetNodeParameter<bool>(enable_color_undistortion_, "enable_color_undistortion", false);
   setAndGetNodeParameter<std::string>(time_domain_, "time_domain", "global");
+  setAndGetNodeParameter<bool>(enable_frame_timestamp_csv_, "enable_frame_timestamp_csv", false);
+  setAndGetNodeParameter<std::string>(frame_timestamp_csv_file_, "frame_timestamp_csv_file", "");
   setAndGetNodeParameter<std::string>(exposure_range_mode_, "exposure_range_mode", "default");
   setAndGetNodeParameter<std::string>(load_config_json_file_path_, "load_config_json_file_path",
                                       "");
@@ -2277,36 +2768,38 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<bool>(enable_publish_extrinsic_, "enable_publish_extrinsic", false);
   setAndGetNodeParameter<std::string>(intra_camera_sync_reference_, "intra_camera_sync_reference",
                                       "Middle");
-  setAndGetNodeParameter<std::string>(ae_mode_, "ae_mode", "depthbased");
-  setAndGetNodeParameter<bool>(enable_sports_mode_, "enable_sports_mode", false);
+  setAndGetNodeParameter<std::string>(ae_reference_stream_, "ae_reference_stream", "depth");
+  setAndGetNodeParameter<std::string>(ae_strategy_, "ae_strategy", "motion");
 
-  RCLCPP_INFO_STREAM(logger_, "current time domain: " << time_domain_);
-  RCLCPP_INFO_STREAM(logger_, "hdr_index1_laser_control_ "
-                                  << hdr_index1_laser_control_ << " hdr_index1_depth_exposure_ "
-                                  << hdr_index1_depth_exposure_ << " hdr_index1_depth_gain_ "
-                                  << hdr_index1_depth_gain_ << " hdr_index1_ir_brightness_ "
-                                  << hdr_index1_ir_brightness_ << " hdr_index1_ir_ae_max_exposure_ "
-                                  << hdr_index1_ir_ae_max_exposure_ << "\n");
-  RCLCPP_INFO_STREAM(logger_, "hdr_index0_laser_control_ "
-                                  << hdr_index0_laser_control_ << " hdr_index0_depth_exposure_ "
-                                  << hdr_index0_depth_exposure_ << " hdr_index0_depth_gain_ "
-                                  << hdr_index0_depth_gain_ << " hdr_index0_ir_brightness_ "
-                                  << hdr_index0_ir_brightness_ << " hdr_index0_ir_ae_max_exposure_ "
-                                  << hdr_index0_ir_ae_max_exposure_ << "\n");
-  RCLCPP_INFO_STREAM(logger_, "laser_index1_laser_control_ "
-                                  << laser_index1_laser_control_ << " laser_index1_depth_exposure_ "
-                                  << laser_index1_depth_exposure_ << " laser_index1_depth_gain_ "
-                                  << laser_index1_depth_gain_ << " laser_index1_ir_brightness_ "
-                                  << laser_index1_ir_brightness_
-                                  << " laser_index1_ir_ae_max_exposure_ "
-                                  << laser_index1_ir_ae_max_exposure_ << "\n");
-  RCLCPP_INFO_STREAM(logger_, "laser_index0_laser_control_ "
-                                  << laser_index0_laser_control_ << " laser_index0_depth_exposure_ "
-                                  << laser_index0_depth_exposure_ << " laser_index0_depth_gain_ "
-                                  << laser_index0_depth_gain_ << " laser_index0_ir_brightness_ "
-                                  << laser_index0_ir_brightness_
-                                  << " laser_index0_ir_ae_max_exposure_ "
-                                  << laser_index0_ir_ae_max_exposure_ << "\n");
+  RCLCPP_INFO_STREAM(logger_, "Current time domain: " << time_domain_);
+  RCLCPP_DEBUG_STREAM(logger_, "hdr_index1_laser_control_ "
+                                   << hdr_index1_laser_control_ << " hdr_index1_depth_exposure_ "
+                                   << hdr_index1_depth_exposure_ << " hdr_index1_depth_gain_ "
+                                   << hdr_index1_depth_gain_ << " hdr_index1_ir_brightness_ "
+                                   << hdr_index1_ir_brightness_
+                                   << " hdr_index1_ir_ae_max_exposure_ "
+                                   << hdr_index1_ir_ae_max_exposure_ << "\n");
+  RCLCPP_DEBUG_STREAM(logger_, "hdr_index0_laser_control_ "
+                                   << hdr_index0_laser_control_ << " hdr_index0_depth_exposure_ "
+                                   << hdr_index0_depth_exposure_ << " hdr_index0_depth_gain_ "
+                                   << hdr_index0_depth_gain_ << " hdr_index0_ir_brightness_ "
+                                   << hdr_index0_ir_brightness_
+                                   << " hdr_index0_ir_ae_max_exposure_ "
+                                   << hdr_index0_ir_ae_max_exposure_ << "\n");
+  RCLCPP_DEBUG_STREAM(logger_,
+                      "laser_index1_laser_control_ "
+                          << laser_index1_laser_control_ << " laser_index1_depth_exposure_ "
+                          << laser_index1_depth_exposure_ << " laser_index1_depth_gain_ "
+                          << laser_index1_depth_gain_ << " laser_index1_ir_brightness_ "
+                          << laser_index1_ir_brightness_ << " laser_index1_ir_ae_max_exposure_ "
+                          << laser_index1_ir_ae_max_exposure_ << "\n");
+  RCLCPP_DEBUG_STREAM(logger_,
+                      "laser_index0_laser_control_ "
+                          << laser_index0_laser_control_ << " laser_index0_depth_exposure_ "
+                          << laser_index0_depth_exposure_ << " laser_index0_depth_gain_ "
+                          << laser_index0_depth_gain_ << " laser_index0_ir_brightness_ "
+                          << laser_index0_ir_brightness_ << " laser_index0_ir_ae_max_exposure_ "
+                          << laser_index0_ir_ae_max_exposure_ << "\n");
 }
 
 void OBCameraNode::setupTopics() {
@@ -2332,8 +2825,9 @@ void OBCameraNode::setupTopics() {
     setupPublishers();
     setupDiagnosticUpdater();
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to setup topics: " << e.getMessage());
-    throw std::runtime_error(e.getMessage());
+    RCLCPP_ERROR_STREAM(logger_,
+                        "Failed to setup topics: " << orbbec_camera::formatObErrorWithStatus(e));
+    throw std::runtime_error(orbbec_camera::formatObErrorWithStatus(e));
   } catch (const std::exception &e) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to setup topics: " << e.what());
     throw std::runtime_error(e.what());
@@ -2393,8 +2887,10 @@ void OBCameraNode::onTemperatureUpdate(diagnostic_updater::DiagnosticStatusWrapp
     status.add("Chip Bottom Temperature", temperature.chipBottomTemp);
     status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Temperature is normal");
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to TemperatureUpdate1: " << e.getMessage());
-    status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, e.getMessage());
+    RCLCPP_ERROR_STREAM(
+        logger_, "Failed to TemperatureUpdate1: " << orbbec_camera::formatObErrorWithStatus(e));
+    status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR,
+                   orbbec_camera::formatObErrorWithStatus(e));
   } catch (const std::exception &e) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to TemperatureUpdate2: " << e.what());
     status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, e.what());
@@ -2449,8 +2945,9 @@ void OBCameraNode::setupDiagnosticUpdater() {
             }
             diagnostic_cv_.notify_all();
           } catch (const ob::Error &e) {
-            RCLCPP_WARN_STREAM(logger_, "Diagnostic update failed: "
-                                            << e.getMessage() << " - Device may be disconnected");
+            RCLCPP_WARN_STREAM(
+                logger_, "Diagnostic update failed: " << orbbec_camera::formatObErrorWithStatus(e)
+                                                      << " - Device may be disconnected");
             // Stop the diagnostic timer if device is having issues
             try {
               if (diagnostic_timer_) {
@@ -2467,7 +2964,8 @@ void OBCameraNode::setupDiagnosticUpdater() {
           }
         });
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Failed to setup diagnostic updater: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(logger_, "Failed to setup diagnostic updater: "
+                                     << orbbec_camera::formatObErrorWithStatus(e));
   } catch (const std::exception &e) {
     RCLCPP_ERROR_STREAM(logger_, "Failed to setup diagnostic updater: " << e.what());
   } catch (...) {
@@ -2492,7 +2990,7 @@ void OBCameraNode::setupPipelineConfig() {
   }
   for (const auto &stream_index : IMAGE_STREAMS) {
     if (enable_stream_[stream_index]) {
-      RCLCPP_INFO_STREAM(logger_, "Enable " << stream_name_[stream_index] << " stream");
+      RCLCPP_DEBUG_STREAM(logger_, "Enable " << stream_name_[stream_index] << " stream");
       auto profile = stream_profile_[stream_index]->as<ob::VideoStreamProfile>();
 
       if (stream_index == COLOR && align_target_stream_ == OB_STREAM_COLOR && align_filter_) {
@@ -2597,6 +3095,20 @@ void OBCameraNode::setupPublishers() {
     }
   }
 
+  if (depth_registration_ && align_mode_ == "SW") {
+    auto depth_image_qos_profile = getRMWQosProfileFromString(image_qos_[DEPTH]);
+    if (use_intra_process_) {
+      depth_image_qos_profile = rmw_qos_profile_default;
+    }
+    if (use_intra_process_) {
+      depth_unaligned_publisher_ = std::make_shared<image_rcl_publisher>(
+          *node_, "depth/image_unaligned", depth_image_qos_profile);
+    } else {
+      depth_unaligned_publisher_ = std::make_shared<image_transport_publisher>(
+          *node_, "depth/image_unaligned", depth_image_qos_profile);
+    }
+  }
+
   if (enable_sync_output_accel_gyro_) {
     std::string topic_name = stream_name_[GYRO] + "_" + stream_name_[ACCEL] + "/sample";
     auto data_qos = getRMWQosProfileFromString(imu_qos_[GYRO]);
@@ -2673,6 +3185,9 @@ void OBCameraNode::setupPublishers() {
   std_msgs::msg::String msg;
   msg.data = filter_status_.dump(2);
   filter_status_pub_->publish(msg);
+  depth_filters_status_pub_ =
+      node_->create_publisher<DepthFiltersStatus>("depth_filters/status", extrinsics_qos);
+  publishDepthFiltersStatus();
 }
 
 void OBCameraNode::publishPointCloud(const std::shared_ptr<ob::FrameSet> &frame_set) {
@@ -2688,7 +3203,7 @@ void OBCameraNode::publishPointCloud(const std::shared_ptr<ob::FrameSet> &frame_
     }
 
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, e.getMessage());
+    RCLCPP_ERROR_STREAM(logger_, orbbec_camera::formatObErrorWithStatus(e));
   } catch (const std::exception &e) {
     RCLCPP_ERROR_STREAM(logger_, e.what());
   } catch (...) {
@@ -2696,8 +3211,41 @@ void OBCameraNode::publishPointCloud(const std::shared_ptr<ob::FrameSet> &frame_
   }
 }
 
+void OBCameraNode::publishRawDepthImage(const std::shared_ptr<ob::Frame> &depth_frame) {
+  if (!depth_frame || !depth_unaligned_publisher_ || !depth_registration_ ||
+      depth_unaligned_publisher_->get_subscription_count() == 0) {
+    return;
+  }
+
+  auto video_frame = depth_frame->as<ob::DepthFrame>();
+  if (!video_frame) {
+    return;
+  }
+
+  int width = static_cast<int>(video_frame->getWidth());
+  int height = static_cast<int>(video_frame->getHeight());
+  auto frame_timestamp = getFrameTimestampUs(depth_frame);
+  auto timestamp = fromUsToROSTime(frame_timestamp);
+
+  std::string frame_id = optical_frame_id_[DEPTH];
+
+  cv::Mat depth_image(height, width, image_format_[DEPTH]);
+  memcpy(depth_image.data, video_frame->getData(), video_frame->getDataSize());
+
+  auto depth_scale = video_frame->getValueScale();
+  depth_image.convertTo(depth_image, depth_image.type(), depth_scale);
+
+  sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+  cv_bridge::CvImage(std_msgs::msg::Header(), encoding_[DEPTH], depth_image).toImageMsg(*image_msg);
+  image_msg->header.stamp = timestamp;
+  image_msg->is_bigendian = false;
+  image_msg->step = width * unit_step_size_[DEPTH];
+  image_msg->header.frame_id = frame_id;
+
+  depth_unaligned_publisher_->publish(std::move(image_msg));
+}
+
 void OBCameraNode::publishDepthPointCloud(const std::shared_ptr<ob::FrameSet> &frame_set) {
-  (void)frame_set;
   if (!depth_cloud_pub_ || depth_cloud_pub_->get_subscription_count() == 0 ||
       !enable_point_cloud_) {
     return;
@@ -3028,13 +3576,14 @@ std::shared_ptr<ob::Frame> OBCameraNode::processDepthFrameFilter(
   if (frame == nullptr || frame->getType() != OB_FRAME_DEPTH) {
     return nullptr;
   }
+  std::lock_guard<std::mutex> depth_filter_lock(depth_filter_mutex_);
   for (size_t i = 0; i < depth_filter_list_.size(); i++) {
     auto filter = depth_filter_list_[i];
     CHECK_NOTNULL(filter.get());
     if (filter->isEnabled() && frame != nullptr) {
       frame = filter->process(frame);
       if (frame == nullptr) {
-        RCLCPP_ERROR_STREAM(logger_, "Depth filter process failed");
+        RCLCPP_WARN_STREAM(logger_, "Depth filter process failed, frame is null");
         break;
       }
     }
@@ -3050,7 +3599,7 @@ void OBCameraNode::setDisparitySearchOffset() {
   if (device_->isPropertySupported(OB_PROP_DISP_SEARCH_OFFSET_INT, OB_PERMISSION_WRITE)) {
     if (disparity_search_offset_ >= 0 && disparity_search_offset_ <= 127) {
       device_->setIntProperty(OB_PROP_DISP_SEARCH_OFFSET_INT, disparity_search_offset_);
-      RCLCPP_INFO_STREAM(logger_, "disparity_search_offset: " << disparity_search_offset_);
+      RCLCPP_INFO_STREAM(logger_, "Set disparity search offset to " << disparity_search_offset_);
     }
     if (offset_index0_ >= 0 && offset_index0_ <= 127 && offset_index1_ >= 0 &&
         offset_index1_ <= 127) {
@@ -3072,6 +3621,11 @@ void OBCameraNode::setDisparitySearchOffset() {
 void OBCameraNode::setDepthAutoExposureROI() {
   static bool depth_roi_has_run = false;
   if (depth_roi_has_run) {
+    return;
+  }
+  if (isGemini305SeriesPID(pid_) && ae_reference_stream_ == "color") {
+    RCLCPP_WARN_STREAM(logger_, "Skip setting depth AE ROI because AE Reference Stream is color");
+    depth_roi_has_run = true;
     return;
   }
   if (device_->isPropertySupported(OB_STRUCT_DEPTH_AE_ROI, OB_PERMISSION_READ_WRITE)) {
@@ -3102,9 +3656,9 @@ void OBCameraNode::setDepthAutoExposureROI() {
                                sizeof(config));
     device_->getStructuredData(OB_STRUCT_DEPTH_AE_ROI, reinterpret_cast<uint8_t *>(&config),
                                &data_size);
-    RCLCPP_INFO_STREAM(logger_, "Setting depth AE ROI to "
-                                    << config.x0_left << ", " << config.x1_right << ", "
-                                    << config.y0_top << ", " << config.y1_bottom);
+    RCLCPP_INFO_STREAM(logger_, "Set depth AE ROI to " << config.x0_left << ", " << config.x1_right
+                                                       << ", " << config.y0_top << ", "
+                                                       << config.y1_bottom);
   }
   depth_roi_has_run = true;
 }
@@ -3112,6 +3666,11 @@ void OBCameraNode::setDepthAutoExposureROI() {
 void OBCameraNode::setColorAutoExposureROI() {
   static bool color_roi_has_run = false;
   if (color_roi_has_run) {
+    return;
+  }
+  if (isGemini305SeriesPID(pid_) && ae_reference_stream_ == "depth") {
+    RCLCPP_WARN_STREAM(logger_, "Skip setting color AE ROI because AE Reference Stream is depth");
+    color_roi_has_run = true;
     return;
   }
   if (device_->isPropertySupported(OB_STRUCT_COLOR_AE_ROI, OB_PERMISSION_READ_WRITE)) {
@@ -3142,9 +3701,9 @@ void OBCameraNode::setColorAutoExposureROI() {
                                sizeof(config));
     device_->getStructuredData(OB_STRUCT_COLOR_AE_ROI, reinterpret_cast<uint8_t *>(&config),
                                &data_size);
-    RCLCPP_INFO_STREAM(logger_, "Setting color AE ROI to "
-                                    << config.x0_left << ", " << config.x1_right << ", "
-                                    << config.y0_top << ", " << config.y1_bottom);
+    RCLCPP_INFO_STREAM(logger_, "Set color AE ROI to " << config.x0_left << ", " << config.x1_right
+                                                       << ", " << config.y0_top << ", "
+                                                       << config.y1_bottom);
   }
   color_roi_has_run = true;
 }
@@ -3172,6 +3731,8 @@ void OBCameraNode::onNewFrameSetCallback(std::shared_ptr<ob::FrameSet> frame_set
   if (frame_set == nullptr) {
     return;
   }
+  const auto frame_set_arrival_system_us = getSystemNowUs();
+  const auto frame_set_arrival_steady_us = getSteadyNowUs();
   try {
     if (!tf_published_) {
       publishStaticTransforms();
@@ -3190,100 +3751,38 @@ void OBCameraNode::onNewFrameSetCallback(std::shared_ptr<ob::FrameSet> frame_set
       setDisparitySearchOffset();
       setDepthAutoExposureROI();
       depth_frame = processDepthFrameFilter(depth_frame);
-      frame_set->pushFrame(depth_frame);
-      static bool depth_frame_info_printed = false;
-      if (!depth_frame_info_printed) {
-        auto profile = depth_frame->getStreamProfile()->as<ob::VideoStreamProfile>();
-        RCLCPP_INFO_STREAM(logger_, "Depth Frame - Width: " << profile->getWidth()
-                                                            << " Height: " << profile->getHeight()
-                                                            << " fps: " << profile->getFps()
-                                                            << " Format: " << profile->getFormat());
-        depth_frame_info_printed = true;
+      if (depth_frame) {
+        frame_set->pushFrame(depth_frame);
+        fps_counter_depth_->tick();
       }
-      fps_counter_depth_->tick();
     }
     if (color_frame) {
       setColorAutoExposureROI();
       color_frame = processColorFrameFilter(color_frame);
       frame_set->pushFrame(color_frame);
-      static bool color_frame_info_printed = false;
-      if (!color_frame_info_printed) {
-        auto profile = color_frame->getStreamProfile()->as<ob::VideoStreamProfile>();
-        RCLCPP_INFO_STREAM(logger_, "Color Frame - Width: " << profile->getWidth()
-                                                            << " Height: " << profile->getHeight()
-                                                            << " fps: " << profile->getFps()
-                                                            << " Format: " << profile->getFormat());
-        color_frame_info_printed = true;
-      }
       fps_counter_color_->tick();
     }
     if (left_color_frame) {
       setColorAutoExposureROI();
       left_color_frame = processColorFrameFilter(left_color_frame);
       frame_set->pushFrame(left_color_frame);
-      static bool left_color_frame_info_printed = false;
-      if (!left_color_frame_info_printed) {
-        auto profile = left_color_frame->getStreamProfile()->as<ob::VideoStreamProfile>();
-        RCLCPP_INFO_STREAM(
-            logger_, "Left Color Frame - Width: "
-                         << profile->getWidth() << " Height: " << profile->getHeight()
-                         << " fps: " << profile->getFps() << " Format: " << profile->getFormat());
-        left_color_frame_info_printed = true;
-      }
     }
     if (right_color_frame) {
       right_color_frame = processColorFrameFilter(right_color_frame);
       frame_set->pushFrame(right_color_frame);
-      static bool right_color_frame_info_printed = false;
-      if (!right_color_frame_info_printed) {
-        auto profile = right_color_frame->getStreamProfile()->as<ob::VideoStreamProfile>();
-        RCLCPP_INFO_STREAM(
-            logger_, "Right Color Frame - Width: "
-                         << profile->getWidth() << " Height: " << profile->getHeight()
-                         << " fps: " << profile->getFps() << " Format: " << profile->getFormat());
-        right_color_frame_info_printed = true;
-      }
     }
     if (left_ir_frame) {
       left_ir_frame = processLeftIrFrameFilter(left_ir_frame);
       frame_set->pushFrame(left_ir_frame);
-      static bool left_ir_frame_info_printed = false;
-      if (!left_ir_frame_info_printed) {
-        auto profile = left_ir_frame->getStreamProfile()->as<ob::VideoStreamProfile>();
-        RCLCPP_INFO_STREAM(
-            logger_, "Left IR Frame - Width: "
-                         << profile->getWidth() << " Height: " << profile->getHeight()
-                         << " fps: " << profile->getFps() << " Format: " << profile->getFormat());
-        left_ir_frame_info_printed = true;
-      }
       fps_counter_left_ir_->tick();
     }
     if (right_ir_frame) {
       right_ir_frame = processRightIrFrameFilter(right_ir_frame);
       frame_set->pushFrame(right_ir_frame);
-      static bool right_ir_frame_info_printed = false;
-      if (!right_ir_frame_info_printed) {
-        auto profile = right_ir_frame->getStreamProfile()->as<ob::VideoStreamProfile>();
-        RCLCPP_INFO_STREAM(
-            logger_, "Right IR Frame - Width: "
-                         << profile->getWidth() << " Height: " << profile->getHeight()
-                         << " fps: " << profile->getFps() << " Format: " << profile->getFormat());
-        right_ir_frame_info_printed = true;
-      }
       fps_counter_right_ir_->tick();
     }
-    if (ir_frame) {
-      static bool ir_frame_info_printed = false;
-      if (!ir_frame_info_printed) {
-        auto profile = ir_frame->getStreamProfile()->as<ob::VideoStreamProfile>();
-        RCLCPP_INFO_STREAM(logger_, "IR Frame - Width: " << profile->getWidth()
-                                                         << " Height: " << profile->getHeight()
-                                                         << " fps: " << profile->getFps()
-                                                         << " Format: " << profile->getFormat());
-        ir_frame_info_printed = true;
-      }
-    }
     if (depth_registration_ && align_filter_ && depth_frame) {
+      publishRawDepthImage(depth_frame);
       if (auto new_frame = align_filter_->process(frame_set)) {
         auto new_frame_set = new_frame->as<ob::FrameSet>();
         CHECK_NOTNULL(new_frame_set.get());
@@ -3293,9 +3792,51 @@ void OBCameraNode::onNewFrameSetCallback(std::shared_ptr<ob::FrameSet> frame_set
         return;
       }
     } else {
-      RCLCPP_DEBUG(logger_,
-                   "Depth registration is disabled or align filter is null or depth frame is "
-                   "null or color frame is null");
+      RCLCPP_DEBUG_ONCE(logger_,
+                        "Depth registration is disabled or align filter is null or depth frame is "
+                        "null or color frame is null");
+    }
+
+    auto final_color_frame = frame_set->getFrame(OB_FRAME_COLOR);
+    auto final_depth_frame = frame_set->getFrame(OB_FRAME_DEPTH);
+    if (frame_timestamp_csv_logger_ && frame_timestamp_csv_logger_->enabled()) {
+      const bool track_color = enable_stream_[COLOR] && static_cast<bool>(final_color_frame);
+      const bool track_depth = enable_stream_[DEPTH] && static_cast<bool>(final_depth_frame);
+      const bool color_publish_expected = track_color;
+      const bool depth_publish_expected = track_depth;
+      frame_timestamp_csv_logger_->recordFrameSet(
+          final_color_frame, final_depth_frame, frame_set_arrival_system_us,
+          frame_set_arrival_steady_us, track_color, track_depth, color_publish_expected,
+          depth_publish_expected);
+    }
+
+    // Refresh frame from current frameset before logging to reflect post-filter/alignment output.
+    for (const auto &stream_index : IMAGE_STREAMS) {
+      if (!enable_stream_[stream_index]) {
+        continue;
+      }
+      auto frame_type = STREAM_TYPE_TO_FRAME_TYPE.at(stream_index.first);
+      auto updated_frame = frame_set->getFrame(frame_type);
+      if (!updated_frame || !updated_frame->is<ob::VideoFrame>()) {
+        continue;
+      }
+      auto updated_video = updated_frame->as<ob::VideoFrame>();
+
+      // For D2C, avoid logging an early unaligned depth frame before align target is available.
+      if (stream_index == DEPTH && depth_registration_) {
+        auto align_target_frame_type = STREAM_TYPE_TO_FRAME_TYPE.at(align_target_stream_);
+        auto align_target_frame = frame_set->getFrame(align_target_frame_type);
+        if (!align_target_frame || !align_target_frame->is<ob::VideoFrame>()) {
+          continue;
+        }
+        auto target_video = align_target_frame->as<ob::VideoFrame>();
+        if (updated_video->getWidth() != target_video->getWidth() ||
+            updated_video->getHeight() != target_video->getHeight()) {
+          continue;
+        }
+      }
+
+      logFrameInfoOnce(stream_index, updated_video);
     }
 
     if (enable_stream_[COLOR] && color_frame) {
@@ -3333,12 +3874,34 @@ void OBCameraNode::onNewFrameSetCallback(std::shared_ptr<ob::FrameSet> frame_set
       }
     }
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "onNewFrameSetCallback error: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(
+        logger_, "onNewFrameSetCallback error: " << orbbec_camera::formatObErrorWithStatus(e));
   } catch (const std::exception &e) {
     RCLCPP_ERROR_STREAM(logger_, "onNewFrameSetCallback error: " << e.what());
   } catch (...) {
     RCLCPP_ERROR_STREAM(logger_, "onNewFrameSetCallback error: unknown error");
   }
+}
+
+void OBCameraNode::logFrameInfoOnce(const stream_index_pair &stream_index,
+                                    const std::shared_ptr<ob::VideoFrame> &video_frame) {
+  if (!video_frame) {
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(frame_info_logged_mutex_);
+    auto iter = frame_info_logged_.find(stream_index);
+    if (iter != frame_info_logged_.end() && iter->second) {
+      return;
+    }
+    frame_info_logged_[stream_index] = true;
+  }
+
+  RCLCPP_INFO_STREAM(logger_, stream_name_[stream_index]
+                                  << " Frame - Width: " << video_frame->getWidth() << " Height: "
+                                  << video_frame->getHeight() << " fps: " << fps_[stream_index]
+                                  << " Format: " << video_frame->getFormat());
 }
 
 void OBCameraNode::onNewColorFrameCallback() {
@@ -3357,7 +3920,7 @@ void OBCameraNode::onNewColorFrameCallback() {
     color_frame_queue_.pop();
   }
 
-  RCLCPP_INFO_STREAM(logger_, "Color frame thread exit!");
+  RCLCPP_DEBUG_STREAM(logger_, "Color frame thread exited");
 }
 
 void OBCameraNode::onNewLeftColorFrameCallback() {
@@ -3375,7 +3938,7 @@ void OBCameraNode::onNewLeftColorFrameCallback() {
     onNewFrameCallback(frameSet->getFrame(OB_FRAME_COLOR_LEFT), COLOR_LEFT);
     left_color_frame_queue_.pop();
   }
-  RCLCPP_INFO_STREAM(logger_, "Left Color frame thread exit!");
+  RCLCPP_DEBUG_STREAM(logger_, "Left color frame thread exited");
 }
 
 void OBCameraNode::onNewRightColorFrameCallback() {
@@ -3393,7 +3956,7 @@ void OBCameraNode::onNewRightColorFrameCallback() {
     onNewFrameCallback(frameSet->getFrame(OB_FRAME_COLOR_RIGHT), COLOR_RIGHT);
     right_color_frame_queue_.pop();
   }
-  RCLCPP_INFO_STREAM(logger_, "Right Color frame thread exit!");
+  RCLCPP_DEBUG_STREAM(logger_, "Right color frame thread exited");
 }
 
 std::shared_ptr<ob::Frame> OBCameraNode::softwareDecodeColorFrame(
@@ -3427,7 +3990,8 @@ std::shared_ptr<ob::Frame> OBCameraNode::softwareDecodeColorFrame(
   try {
     color_frame = filter->process(frame);
   } catch (const ob::Error &e) {
-    RCLCPP_ERROR_STREAM(logger_, "Format convert failed: " << e.getMessage());
+    RCLCPP_ERROR_STREAM(logger_,
+                        "Format convert failed: " << orbbec_camera::formatObErrorWithStatus(e));
     return nullptr;
   } catch (const std::exception &e) {
     RCLCPP_ERROR_STREAM(logger_, "Format convert failed: " << e.what());
@@ -3472,6 +4036,9 @@ bool OBCameraNode::decodeColorFrameToBuffer(const std::shared_ptr<ob::Frame> &fr
   bool has_subscriber = false;
   if (image_publishers_.count(stream_index) && image_publishers_[stream_index]) {
     has_subscriber = image_publishers_[stream_index]->get_subscription_count() > 0;
+  }
+  if (stream_index == COLOR && enable_color_undistortion_ && color_undistortion_publisher_) {
+    has_subscriber = true;
   }
 
   if (frame->getType() == OB_FRAME_COLOR && enable_colored_point_cloud_ &&
@@ -3582,7 +4149,11 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
     return;
   }
   CHECK_NOTNULL(image_publishers_[stream_index]);
-  bool has_subscriber = image_publishers_[stream_index]->get_subscription_count() > 0;
+  const bool has_raw_image_subscriber =
+      image_publishers_[stream_index]->get_subscription_count() > 0;
+  const bool enable_undistortion_publish =
+      (stream_index == COLOR && enable_color_undistortion_ && color_undistortion_publisher_);
+  bool has_subscriber = has_raw_image_subscriber || enable_undistortion_publish;
   has_subscriber =
       has_subscriber || camera_info_publishers_[stream_index]->get_subscription_count() > 0;
   has_subscriber =
@@ -3672,23 +4243,6 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
     camera_info.height = height;
   }
   auto &image = images_[stream_index];
-  if (stream_index == COLOR && enable_color_undistortion_) {
-    auto undistort_result = undistortImage(image, intrinsic, distortion);
-    sensor_msgs::msg::Image::UniquePtr undistorted_image_msg(new sensor_msgs::msg::Image());
-    cv_bridge::CvImage(std_msgs::msg::Header(), encoding_[stream_index], undistort_result.image)
-        .toImageMsg(*undistorted_image_msg);
-    CHECK_NOTNULL(undistorted_image_msg.get());
-    undistorted_image_msg->header.stamp = timestamp;
-    undistorted_image_msg->is_bigendian = false;
-    undistorted_image_msg->step = width * unit_step_size_[stream_index];
-    undistorted_image_msg->header.frame_id = frame_id;
-    color_undistortion_publisher_->publish(std::move(undistorted_image_msg));
-    // Update intrinsic with the new camera matrix from undistortion
-    camera_info.p.at(0) = undistort_result.new_intrinsic.fx;
-    camera_info.p.at(5) = undistort_result.new_intrinsic.fy;
-    camera_info.p.at(2) = undistort_result.new_intrinsic.cx;
-    camera_info.p.at(6) = undistort_result.new_intrinsic.cy;
-  }
   if (frame->getType() == OB_FRAME_IR_RIGHT && enable_stream_[INFRA1]) {
     auto stream_profile = frame->getStreamProfile();
     CHECK_NOTNULL(stream_profile);
@@ -3702,13 +4256,7 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
     camera_info.p.at(3) = -fx * ex.trans[0] / 1000.0 + 0.0;
     camera_info.p.at(7) = -fy * ex.trans[1] / 1000.0 + 0.0;
   }
-  CHECK(camera_info_publishers_.count(stream_index) > 0);
-  camera_info_publishers_[stream_index]->publish(camera_info);
-  publishMetadata(frame, stream_index, camera_info.header);
   CHECK_NOTNULL(image_publishers_[stream_index]);
-  if (image_publishers_[stream_index]->get_subscription_count() == 0) {
-    return;
-  }
   if (image.empty() || image.cols != width || image.rows != height) {
     image.create(height, width, image_format_[stream_index]);
   }
@@ -3726,21 +4274,41 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
   }
   if (frame->getType() == OB_FRAME_COLOR && frame->format() != OB_FORMAT_Y8 &&
       frame->format() != OB_FORMAT_Y16 && frame->format() != OB_FORMAT_BGRA &&
-      frame->format() != OB_FORMAT_RGBA && image_publishers_[COLOR]->get_subscription_count() > 0) {
+      frame->format() != OB_FORMAT_RGBA && has_subscriber) {
     memcpy(image.data, rgb_buffer_, video_frame->getWidth() * video_frame->getHeight() * 3);
   } else if (frame->getType() == OB_FRAME_COLOR_LEFT && frame->format() != OB_FORMAT_Y8 &&
              frame->format() != OB_FORMAT_Y16 && frame->format() != OB_FORMAT_BGRA &&
-             frame->format() != OB_FORMAT_RGBA &&
-             image_publishers_[COLOR_LEFT]->get_subscription_count() > 0) {
+             frame->format() != OB_FORMAT_RGBA && has_subscriber) {
     memcpy(image.data, rgb_buffer_left_, video_frame->getWidth() * video_frame->getHeight() * 3);
   } else if (frame->getType() == OB_FRAME_COLOR_RIGHT && frame->format() != OB_FORMAT_Y8 &&
              frame->format() != OB_FORMAT_Y16 && frame->format() != OB_FORMAT_BGRA &&
-             frame->format() != OB_FORMAT_RGBA &&
-             image_publishers_[COLOR_RIGHT]->get_subscription_count() > 0) {
+             frame->format() != OB_FORMAT_RGBA && has_subscriber) {
     memcpy(image.data, rgb_buffer_right_, video_frame->getWidth() * video_frame->getHeight() * 3);
   } else {
     memcpy(image.data, video_frame->getData(), video_frame->getDataSize());
   }
+
+  if (enable_undistortion_publish) {
+    auto undistort_result = undistortImage(image, intrinsic, distortion);
+    sensor_msgs::msg::Image::UniquePtr undistorted_image_msg(new sensor_msgs::msg::Image());
+    cv_bridge::CvImage(std_msgs::msg::Header(), encoding_[stream_index], undistort_result.image)
+        .toImageMsg(*undistorted_image_msg);
+    CHECK_NOTNULL(undistorted_image_msg.get());
+    undistorted_image_msg->header.stamp = timestamp;
+    undistorted_image_msg->is_bigendian = false;
+    undistorted_image_msg->step = width * unit_step_size_[stream_index];
+    undistorted_image_msg->header.frame_id = frame_id;
+    color_undistortion_publisher_->publish(std::move(undistorted_image_msg));
+    // Update intrinsic with the new camera matrix from undistortion
+    camera_info.p.at(0) = undistort_result.new_intrinsic.fx;
+    camera_info.p.at(5) = undistort_result.new_intrinsic.fy;
+    camera_info.p.at(2) = undistort_result.new_intrinsic.cx;
+    camera_info.p.at(6) = undistort_result.new_intrinsic.cy;
+  }
+
+  CHECK(camera_info_publishers_.count(stream_index) > 0);
+  camera_info_publishers_[stream_index]->publish(camera_info);
+  publishMetadata(frame, stream_index, camera_info.header);
 
   if (stream_index == DEPTH) {
     auto depth_scale = video_frame->as<ob::DepthFrame>()->getValueScale();
@@ -3762,7 +4330,14 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
   } else if (stream_index == DEPTH) {
     fps_delay_status_depth_->tick(frame_timestamp);
   }
-  image_publishers_[stream_index]->publish(std::move(image_msg));
+  if (has_raw_image_subscriber) {
+    if (frame_timestamp_csv_logger_ && frame_timestamp_csv_logger_->enabled() &&
+        (stream_index == COLOR || stream_index == DEPTH)) {
+      frame_timestamp_csv_logger_->recordPreImagePublish(stream_index.first, frame,
+                                                         getSystemNowUs(), getSteadyNowUs());
+    }
+    image_publishers_[stream_index]->publish(std::move(image_msg));
+  }
 }
 
 void OBCameraNode::publishMetadata(const std::shared_ptr<ob::Frame> &frame,
@@ -4074,8 +4649,8 @@ void OBCameraNode::calcAndPublishStaticTransform() {
     try {
       ex = stream_profile->getExtrinsicTo(base_stream_profile);
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_, "Failed to get " << stream_name_[stream_index]
-                                                    << " extrinsic: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(logger_, "Failed to get " << stream_name_[stream_index] << " extrinsic: "
+                                                    << orbbec_camera::formatObErrorWithStatus(e));
       ex = OBExtrinsic({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}});
     }
 
@@ -4091,12 +4666,13 @@ void OBCameraNode::calcAndPublishStaticTransform() {
     }
     publishStaticTF(timestamp, zero_trans, quaternion_optical, frame_id_[stream_index],
                     optical_frame_id_[stream_index]);
-    RCLCPP_INFO_STREAM(logger_, "Publishing static transform from " << stream_name_[stream_index]
-                                                                    << " to "
-                                                                    << stream_name_[base_stream_]);
-    RCLCPP_INFO_STREAM(logger_, "Translation " << trans[0] << ", " << trans[1] << ", " << trans[2]);
-    RCLCPP_INFO_STREAM(logger_, "Rotation " << Q.getX() << ", " << Q.getY() << ", " << Q.getZ()
-                                            << ", " << Q.getW());
+    RCLCPP_DEBUG_STREAM(logger_, "Publishing static transform from " << stream_name_[stream_index]
+                                                                     << " to "
+                                                                     << stream_name_[base_stream_]);
+    RCLCPP_DEBUG_STREAM(logger_,
+                        "Translation " << trans[0] << ", " << trans[1] << ", " << trans[2]);
+    RCLCPP_DEBUG_STREAM(logger_, "Rotation " << Q.getX() << ", " << Q.getY() << ", " << Q.getZ()
+                                             << ", " << Q.getW());
   }
 
   if ((pid_ == FEMTO_BOLT_PID || pid_ == FEMTO_MEGA_PID) && enable_stream_[DEPTH] &&
@@ -4119,8 +4695,8 @@ void OBCameraNode::calcAndPublishStaticTransform() {
     try {
       ex = base_stream_profile->getExtrinsicTo(stream_profile_[COLOR]);
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_,
-                          "Failed to get " << frame_id << " extrinsic: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(logger_, "Failed to get " << frame_id << " extrinsic: "
+                                                    << orbbec_camera::formatObErrorWithStatus(e));
       ex = OBExtrinsic({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}});
     }
     depth_to_other_extrinsics_[COLOR] = ex;
@@ -4135,8 +4711,8 @@ void OBCameraNode::calcAndPublishStaticTransform() {
     try {
       ex = base_stream_profile->getExtrinsicTo(stream_profile_[INFRA0]);
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_,
-                          "Failed to get " << frame_id << " extrinsic: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(logger_, "Failed to get " << frame_id << " extrinsic: "
+                                                    << orbbec_camera::formatObErrorWithStatus(e));
       ex = OBExtrinsic({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}});
     }
     depth_to_other_extrinsics_[INFRA0] = ex;
@@ -4150,8 +4726,8 @@ void OBCameraNode::calcAndPublishStaticTransform() {
     try {
       ex = base_stream_profile->getExtrinsicTo(stream_profile_[INFRA1]);
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_,
-                          "Failed to get " << frame_id << " extrinsic: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(logger_, "Failed to get " << frame_id << " extrinsic: "
+                                                    << orbbec_camera::formatObErrorWithStatus(e));
       ex = OBExtrinsic({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}});
     }
     depth_to_other_extrinsics_[INFRA1] = ex;
@@ -4165,8 +4741,8 @@ void OBCameraNode::calcAndPublishStaticTransform() {
     try {
       ex = base_stream_profile->getExtrinsicTo(stream_profile_[INFRA2]);
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_,
-                          "Failed to get " << frame_id << " extrinsic: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(logger_, "Failed to get " << frame_id << " extrinsic: "
+                                                    << orbbec_camera::formatObErrorWithStatus(e));
       ex = OBExtrinsic({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}});
     }
     ex.trans[0] = -std::abs(ex.trans[0]);
@@ -4181,8 +4757,8 @@ void OBCameraNode::calcAndPublishStaticTransform() {
     try {
       ex = base_stream_profile->getExtrinsicTo(stream_profile_[ACCEL]);
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_,
-                          "Failed to get " << frame_id << " extrinsic: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(logger_, "Failed to get " << frame_id << " extrinsic: "
+                                                    << orbbec_camera::formatObErrorWithStatus(e));
       ex = OBExtrinsic({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}});
     }
     depth_to_other_extrinsics_[ACCEL] = ex;
@@ -4196,8 +4772,8 @@ void OBCameraNode::calcAndPublishStaticTransform() {
     try {
       ex = base_stream_profile->getExtrinsicTo(stream_profile_[GYRO]);
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_,
-                          "Failed to get " << frame_id << " extrinsic: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(logger_, "Failed to get " << frame_id << " extrinsic: "
+                                                    << orbbec_camera::formatObErrorWithStatus(e));
       ex = OBExtrinsic({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}});
     }
     depth_to_other_extrinsics_[GYRO] = ex;
@@ -4211,8 +4787,8 @@ void OBCameraNode::calcAndPublishStaticTransform() {
     try {
       ex = stream_profile_[COLOR_LEFT]->getExtrinsicTo(stream_profile_[COLOR_RIGHT]);
     } catch (const ob::Error &e) {
-      RCLCPP_ERROR_STREAM(logger_,
-                          "Failed to get " << frame_id << " extrinsic: " << e.getMessage());
+      RCLCPP_ERROR_STREAM(logger_, "Failed to get " << frame_id << " extrinsic: "
+                                                    << orbbec_camera::formatObErrorWithStatus(e));
       ex = OBExtrinsic({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}});
     }
     depth_to_other_extrinsics_[COLOR_LEFT] = ex;
@@ -4347,17 +4923,18 @@ bool OBCameraNode::isGemini335PID(uint32_t pid) {
          pid == GEMINI_335L_PID || pid == GEMINI_330L_PID || pid == GEMINI_336L_PID ||
          pid == GEMINI_335LG_PID || pid == GEMINI_336LG_PID || pid == GEMINI_335LE_PID ||
          pid == GEMINI_336LE_PID || pid == CUSTOM_ADVANTECH_GEMINI_336_PID ||
-         pid == CUSTOM_ADVANTECH_GEMINI_336L_PID || pid == GEMINI_338_PID;
+         pid == CUSTOM_ADVANTECH_GEMINI_336L_PID || pid == GEMINI_338_PID ||
+         pid == GEMINI_338L_PID || pid == GEMINI_338LE_PID || pid == GEMINI_338LG_PID;
 }
 
 bool OBCameraNode::isGemini435LePID(uint32_t pid) { return pid == GEMINI_435Le_PID; }
 bool OBCameraNode::isPublishMetaData(uint32_t pid) {
-  return isGemini335PID(pid) || isGemini435LePID(pid) || pid == GEMINI_305_PID;
+  return isGemini335PID(pid) || isGemini435LePID(pid) || isGemini305SeriesPID(pid);
 }
 
 bool OBCameraNode::isDepthWorkModeDevices(uint32_t pid) { return pid == GEMINI_435Le_PID; }
 
-bool OBCameraNode::isnotLaserDevices(uint32_t pid) { return pid == GEMINI_305_PID; }
+bool OBCameraNode::isnotLaserDevices(uint32_t pid) { return isGemini305SeriesPID(pid); }
 
 orbbec_camera_msgs::msg::IMUInfo OBCameraNode::createIMUInfo(
     const stream_index_pair &stream_index) {
@@ -4409,244 +4986,306 @@ orbbec_camera_msgs::msg::IMUInfo OBCameraNode::createIMUInfo(
 void OBCameraNode::setFilterCallback(const std::shared_ptr<SetFilter ::Request> &request,
                                      std::shared_ptr<SetFilter ::Response> &response) {
   try {
+    response->success = false;
+    response->message.clear();
+    auto fail = [&response](const std::string &msg) {
+      response->success = false;
+      response->message = msg;
+    };
+    const auto normalized_request_filter_name = normalizeDepthFilterName(request->filter_name);
+    const bool is_noise_removal_filter = normalized_request_filter_name == "NoiseRemovalFilter";
+    const bool is_hardware_noise_removal_filter =
+        normalized_request_filter_name == "HardwareNoiseRemovalFilter";
+    bool is_supported_by_property = false;
+    if (is_noise_removal_filter) {
+      is_supported_by_property =
+          device_->isPropertySupported(OB_PROP_DEPTH_SOFT_FILTER_BOOL, OB_PERMISSION_READ_WRITE) ||
+          device_->isPropertySupported(OB_PROP_DEPTH_MAX_DIFF_INT, OB_PERMISSION_WRITE) ||
+          device_->isPropertySupported(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT, OB_PERMISSION_WRITE);
+    } else if (is_hardware_noise_removal_filter) {
+      is_supported_by_property =
+          device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL,
+                                       OB_PERMISSION_READ_WRITE) ||
+          device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT,
+                                       OB_PERMISSION_READ_WRITE);
+    }
+
     RCLCPP_INFO_STREAM(logger_, "filter_name: " << request->filter_name << "  filter_enable: "
                                                 << (request->filter_enable ? "true" : "false"));
-    auto it = std::remove_if(depth_filter_list_.begin(), depth_filter_list_.end(),
-                             [&request](const std::shared_ptr<ob::Filter> &filter) {
-                               return filter->getName() == request->filter_name;
-                             });
-    depth_filter_list_.erase(it, depth_filter_list_.end());
-    if (request->filter_name == "DecimationFilter") {
-      auto decimation_filter = std::make_shared<ob::DecimationFilter>();
-      decimation_filter->enable(request->filter_enable);
-      depth_filter_list_.push_back(decimation_filter);
-      if (request->filter_param.size() > 0) {
-        auto range = decimation_filter->getScaleRange();
-        auto decimation_filter_scale = request->filter_param[0];
-        if (decimation_filter_scale <= range.max && decimation_filter_scale >= range.min) {
-          RCLCPP_INFO_STREAM(logger_,
-                             "Set decimation filter scale value to " << decimation_filter_scale);
-          decimation_filter->setScaleValue(decimation_filter_scale);
-        }
-        if (decimation_filter_scale != -1 &&
-            (decimation_filter_scale < range.min || decimation_filter_scale > range.max)) {
-          RCLCPP_ERROR_STREAM(logger_, "Decimation filter scale value is out of range "
-                                           << range.min << " - " << range.max);
-        }
-      } else {
-        response->message =
-            "The filter switch setting is successful, but the filter parameter setting fails";
+    if (is_noise_removal_filter || is_hardware_noise_removal_filter) {
+      if (!is_supported_by_property) {
+        fail("Filter '" + normalized_request_filter_name + "' is not supported by this device");
         return;
       }
-
-    } else if (request->filter_name == "HDRMerge") {
-      auto hdr_merge_filter = std::make_shared<ob::HdrMerge>();
-      hdr_merge_filter->enable(request->filter_enable);
-      depth_filter_list_.push_back(hdr_merge_filter);
-      if (request->filter_param.size() > 3) {
-        auto config = OBHdrConfig();
-        config.enable = true;
-        config.exposure_1 = request->filter_param[0];
-        config.gain_1 = request->filter_param[1];
-        config.exposure_2 = request->filter_param[2];
-        config.gain_2 = request->filter_param[3];
-        device_->setStructuredData(OB_STRUCT_DEPTH_HDR_CONFIG,
-                                   reinterpret_cast<const uint8_t *>(&config), sizeof(config));
-        RCLCPP_INFO_STREAM(logger_, "Set HDR merge filter params: "
-                                        << "\nexposure_1: " << request->filter_param[0]
-                                        << "\ngain_1: " << request->filter_param[1]
-                                        << "\nexposure_2: " << request->filter_param[2]
-                                        << "\ngain_2: " << request->filter_param[3]);
-      } else {
-        response->message =
-            "The filter switch setting is successful, but the filter parameter setting fails";
-        return;
-      }
-
-    } else if (request->filter_name == "SequenceIdFilter") {
-      auto sequenced_filter = std::make_shared<ob::SequenceIdFilter>();
-      sequenced_filter->enable(request->filter_enable);
-      depth_filter_list_.push_back(sequenced_filter);
-      if (request->filter_param.size() > 0) {
-        sequenced_filter->selectSequenceId(request->filter_param[0]);
-        RCLCPP_INFO_STREAM(
-            logger_, "Set sequenced filter selectSequenceId value to " << request->filter_param[0]);
-      } else {
-        response->message =
-            "The filter switch setting is successful, but the filter parameter setting fails";
-        return;
-      }
-
-    } else if (request->filter_name == "ThresholdFilter") {
-      auto threshold_filter = std::make_shared<ob::ThresholdFilter>();
-      threshold_filter->enable(request->filter_enable);
-      depth_filter_list_.push_back(threshold_filter);
-      if (request->filter_param.size() > 1) {
-        auto threshold_filter_min = request->filter_param[0];
-        auto threshold_filter_max = request->filter_param[1];
-        threshold_filter->setValueRange(threshold_filter_min, threshold_filter_max);
-        RCLCPP_INFO_STREAM(logger_, "Set threshold filter value range to "
-                                        << threshold_filter_min << " - " << threshold_filter_max);
-      } else {
-        response->message =
-            "The filter switch setting is successful, but the filter parameter setting fails";
-        return;
-      }
-
-    } else if (request->filter_name == "NoiseRemovalFilter") {
-      if (device_->isPropertySupported(OB_PROP_DEPTH_SOFT_FILTER_BOOL, OB_PERMISSION_READ_WRITE)) {
-        device_->setBoolProperty(OB_PROP_DEPTH_SOFT_FILTER_BOOL, request->filter_enable);
-      }
-      if (request->filter_param.size() > 1) {
-        if (device_->isPropertySupported(OB_PROP_DEPTH_MAX_DIFF_INT, OB_PERMISSION_WRITE)) {
-          auto default_noise_removal_filter_min_diff =
-              device_->getIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT);
-          RCLCPP_INFO_STREAM(logger_, "default noise removal filter min diff: "
-                                          << default_noise_removal_filter_min_diff);
-          device_->setIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT, request->filter_param[0]);
-          auto new_noise_removal_filter_min_diff =
-              device_->getIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT);
-          RCLCPP_INFO_STREAM(logger_, "after set noise removal filter min diff: "
-                                          << new_noise_removal_filter_min_diff);
-        }
-        if (device_->isPropertySupported(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT, OB_PERMISSION_WRITE)) {
-          auto default_noise_removal_filter_max_size =
-              device_->getIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT);
-          RCLCPP_INFO_STREAM(logger_, "default noise removal filter max size: "
-                                          << default_noise_removal_filter_max_size);
-          device_->setIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT, request->filter_param[1]);
-          auto new_noise_removal_filter_max_size =
-              device_->getIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT);
-          RCLCPP_INFO_STREAM(logger_, "after set noise removal filter max size: "
-                                          << new_noise_removal_filter_max_size);
-        }
-      } else {
-        response->message =
-            "The filter switch setting is successful, but the filter parameter setting fails";
-        return;
-      }
-    } else if (request->filter_name == "HardwareNoiseRemoval") {
-      if (device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL,
-                                       OB_PERMISSION_READ_WRITE)) {
-        device_->setBoolProperty(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL,
-                                 request->filter_enable);
-        if (request->filter_param.size() > 0 &&
-            device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT,
+      if (is_noise_removal_filter) {
+        if (device_->isPropertySupported(OB_PROP_DEPTH_SOFT_FILTER_BOOL,
                                          OB_PERMISSION_READ_WRITE)) {
-          if (request->filter_enable) {
-            device_->setFloatProperty(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT,
-                                      request->filter_param[0]);
-            RCLCPP_INFO_STREAM(logger_, "Setting hardware noise removal filter threshold :"
-                                            << request->filter_param[0]);
+          device_->setBoolProperty(OB_PROP_DEPTH_SOFT_FILTER_BOOL, request->filter_enable);
+          RCLCPP_INFO_STREAM(logger_, "enable_noise_removal_filter:" << request->filter_enable);
+        }
+        if (request->filter_param.size() > 1) {
+          if (device_->isPropertySupported(OB_PROP_DEPTH_MAX_DIFF_INT, OB_PERMISSION_WRITE)) {
+            device_->setIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT, request->filter_param[0]);
+            auto new_noise_removal_filter_min_diff =
+                device_->getIntProperty(OB_PROP_DEPTH_MAX_DIFF_INT);
+            RCLCPP_INFO_STREAM(logger_, "Set noise_removal_filter_min_diff: "
+                                            << new_noise_removal_filter_min_diff);
+            noise_removal_filter_min_diff_ = request->filter_param[0];
+          }
+          if (device_->isPropertySupported(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT,
+                                           OB_PERMISSION_WRITE)) {
+            device_->setIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT, request->filter_param[1]);
+            auto new_noise_removal_filter_max_size =
+                device_->getIntProperty(OB_PROP_DEPTH_MAX_SPECKLE_SIZE_INT);
+            RCLCPP_INFO_STREAM(logger_, "Set noise_removal_filter_max_size: "
+                                            << new_noise_removal_filter_max_size);
+            noise_removal_filter_max_size_ = request->filter_param[1];
+          }
+        }
+        enable_noise_removal_filter_ = request->filter_enable;
+      } else if (is_hardware_noise_removal_filter) {
+        if (device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL,
+                                         OB_PERMISSION_READ_WRITE)) {
+          device_->setBoolProperty(OB_PROP_HW_NOISE_REMOVE_FILTER_ENABLE_BOOL,
+                                   request->filter_enable);
+          RCLCPP_INFO_STREAM(logger_,
+                             "Set hardware_noise_removal_filter:" << request->filter_enable);
+          if (request->filter_param.size() > 0 &&
+              device_->isPropertySupported(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT,
+                                           OB_PERMISSION_READ_WRITE)) {
+            if (request->filter_enable) {
+              device_->setFloatProperty(OB_PROP_HW_NOISE_REMOVE_FILTER_THRESHOLD_FLOAT,
+                                        request->filter_param[0]);
+              RCLCPP_INFO_STREAM(logger_, "Set hardware_noise_removal_filter_threshold :"
+                                              << request->filter_param[0]);
+              hardware_noise_removal_filter_threshold_ = request->filter_param[0];
+            }
+          } else {
+            fail("The filter switch setting is successful, but the filter parameter setting fails");
+            return;
+          }
+        }
+        enable_hardware_noise_removal_filter_ = request->filter_enable;
+      }
+    } else {
+      std::unique_lock<std::mutex> depth_filter_lock(depth_filter_mutex_);
+      auto is_same_filter =
+          [&normalized_request_filter_name](const std::shared_ptr<ob::Filter> &filter) {
+            if (!filter) {
+              return false;
+            }
+            return normalizeDepthFilterName(filter->getName()) == normalized_request_filter_name ||
+                   normalizeDepthFilterName(filter->type()) == normalized_request_filter_name;
+          };
+
+      auto first_match_it =
+          std::find_if(depth_filter_list_.begin(), depth_filter_list_.end(),
+                       [&is_same_filter](const auto &filter) { return is_same_filter(filter); });
+      if (first_match_it == depth_filter_list_.end()) {
+        fail("Filter '" + normalized_request_filter_name + "' is not supported by this device");
+        return;
+      }
+      const auto &existing_filter = *first_match_it;
+      if (!existing_filter) {
+        fail("Filter '" + normalized_request_filter_name + "' is not supported by this device");
+        return;
+      }
+
+      if (normalized_request_filter_name == "DecimationFilter") {
+        auto decimation_filter = existing_filter->as<ob::DecimationFilter>();
+        decimation_filter->enable(request->filter_enable);
+        if (request->filter_param.size() > 0) {
+          auto range = decimation_filter->getScaleRange();
+          auto decimation_filter_scale = request->filter_param[0];
+          if (decimation_filter_scale <= range.max && decimation_filter_scale >= range.min) {
+            RCLCPP_INFO_STREAM(logger_,
+                               "Set decimation filter scale value to " << decimation_filter_scale);
+            decimation_filter->setScaleValue(decimation_filter_scale);
+          }
+          if (decimation_filter_scale != -1 &&
+              (decimation_filter_scale < range.min || decimation_filter_scale > range.max)) {
+            RCLCPP_ERROR_STREAM(logger_, "Decimation filter scale value is out of range "
+                                             << range.min << " - " << range.max);
+            fail("Decimation filter scale value is out of range");
+            return;
+          }
+          if (decimation_filter_scale <= range.max && decimation_filter_scale >= range.min) {
+            decimation_filter_scale_ = decimation_filter_scale;
           }
         } else {
-          response->message =
-              "The filter switch setting is successful, but the filter parameter setting fails";
+          fail("The filter switch setting is successful, but the filter parameter setting fails");
           return;
         }
-      }
-    } else if (request->filter_name == "SpatialAdvancedFilter") {
-      auto spatial_filter = std::make_shared<ob::SpatialAdvancedFilter>();
-      spatial_filter->enable(request->filter_enable);
-      depth_filter_list_.push_back(spatial_filter);
-      if (request->filter_param.size() > 3) {
-        OBSpatialAdvancedFilterParams params{};
-        params.alpha = request->filter_param[0];
-        params.disp_diff = request->filter_param[1];
-        params.magnitude = request->filter_param[2];
-        params.radius = request->filter_param[3];
-        spatial_filter->setFilterParams(params);
-        RCLCPP_INFO_STREAM(logger_, "Set spatial filter params: "
-                                        << "\nalpha:" << params.alpha << "\nradius:"
-                                        << params.radius << "\ndisp_diff:" << params.disp_diff);
+        enable_decimation_filter_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "HDRMerge") {
+        auto hdr_merge_filter = existing_filter->as<ob::HdrMerge>();
+        hdr_merge_filter->enable(request->filter_enable);
+        if (request->filter_param.size() > 3) {
+          auto config = OBHdrConfig();
+          config.enable = true;
+          config.exposure_1 = request->filter_param[0];
+          config.gain_1 = request->filter_param[1];
+          config.exposure_2 = request->filter_param[2];
+          config.gain_2 = request->filter_param[3];
+          device_->setStructuredData(OB_STRUCT_DEPTH_HDR_CONFIG,
+                                     reinterpret_cast<const uint8_t *>(&config), sizeof(config));
+          RCLCPP_INFO_STREAM(logger_, "Set HDR merge filter params: "
+                                          << "\nexposure_1: " << request->filter_param[0]
+                                          << "\ngain_1: " << request->filter_param[1]
+                                          << "\nexposure_2: " << request->filter_param[2]
+                                          << "\ngain_2: " << request->filter_param[3]);
+          hdr_merge_exposure_1_ = request->filter_param[0];
+          hdr_merge_gain_1_ = request->filter_param[1];
+          hdr_merge_exposure_2_ = request->filter_param[2];
+          hdr_merge_gain_2_ = request->filter_param[3];
+        } else {
+          fail("The filter switch setting is successful, but the filter parameter setting fails");
+          return;
+        }
+        enable_hdr_merge_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "SequenceIdFilter") {
+        auto sequenced_filter = existing_filter->as<ob::SequenceIdFilter>();
+        sequenced_filter->enable(request->filter_enable);
+        if (request->filter_param.size() > 0) {
+          sequenced_filter->selectSequenceId(request->filter_param[0]);
+          RCLCPP_INFO_STREAM(logger_, "Set sequenced filter selectSequenceId value to "
+                                          << request->filter_param[0]);
+          sequence_id_filter_id_ = request->filter_param[0];
+        } else {
+          fail("The filter switch setting is successful, but the filter parameter setting fails");
+          return;
+        }
+        enable_sequence_id_filter_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "ThresholdFilter") {
+        auto threshold_filter = existing_filter->as<ob::ThresholdFilter>();
+        threshold_filter->enable(request->filter_enable);
+        if (request->filter_param.size() > 1) {
+          auto threshold_filter_min = request->filter_param[0];
+          auto threshold_filter_max = request->filter_param[1];
+          threshold_filter->setValueRange(threshold_filter_min, threshold_filter_max);
+          RCLCPP_INFO_STREAM(logger_, "Set threshold filter value range to "
+                                          << threshold_filter_min << " - " << threshold_filter_max);
+          threshold_filter_min_ = threshold_filter_min;
+          threshold_filter_max_ = threshold_filter_max;
+        } else {
+          fail("The filter switch setting is successful, but the filter parameter setting fails");
+          return;
+        }
+        enable_threshold_filter_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "SpatialAdvancedFilter") {
+        auto spatial_filter = existing_filter->as<ob::SpatialAdvancedFilter>();
+        spatial_filter->enable(request->filter_enable);
+        if (request->filter_param.size() > 3) {
+          OBSpatialAdvancedFilterParams params{};
+          params.alpha = request->filter_param[0];
+          params.disp_diff = request->filter_param[1];
+          params.magnitude = request->filter_param[2];
+          params.radius = request->filter_param[3];
+          spatial_filter->setFilterParams(params);
+          RCLCPP_INFO_STREAM(logger_, "Set SpatialFilter params: "
+                                          << "\nalpha:" << params.alpha
+                                          << "\ndisp_diff:" << params.disp_diff
+                                          << "\nmagnitude:" << static_cast<int>(params.magnitude)
+                                          << "\nradius:" << params.radius);
+          spatial_filter_alpha_ = params.alpha;
+          spatial_filter_diff_threshold_ = params.disp_diff;
+          spatial_filter_magnitude_ = params.magnitude;
+          spatial_filter_radius_ = params.radius;
+        } else {
+          fail("The filter switch setting is successful, but the filter parameter setting fails");
+          return;
+        }
+        enable_spatial_filter_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "TemporalFilter") {
+        auto temporal_filter = existing_filter->as<ob::TemporalFilter>();
+        temporal_filter->enable(request->filter_enable);
+        if (request->filter_param.size() > 1) {
+          temporal_filter->setDiffScale(request->filter_param[0]);
+          temporal_filter->setWeight(request->filter_param[1]);
+          RCLCPP_INFO_STREAM(logger_, "Set TemporalFilter params: "
+                                          << "\ndiff_scale:" << request->filter_param[0]
+                                          << "\nweight:" << request->filter_param[1]);
+          temporal_filter_diff_threshold_ = request->filter_param[0];
+          temporal_filter_weight_ = request->filter_param[1];
+        } else {
+          fail("The filter switch setting is successful, but the filter parameter setting fails");
+          return;
+        }
+        enable_temporal_filter_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "SpatialFastFilter") {
+        auto spatial_fast_filter = existing_filter->as<ob::SpatialFastFilter>();
+        spatial_fast_filter->enable(request->filter_enable);
+        if (request->filter_param.size() > 0) {
+          OBSpatialFastFilterParams params{};
+          params.radius = request->filter_param[0];
+          spatial_fast_filter->setFilterParams(params);
+          RCLCPP_INFO_STREAM(logger_,
+                             "Set SpatialFastFilter radius to " << static_cast<int>(params.radius));
+          spatial_fast_filter_radius_ = params.radius;
+        } else {
+          fail("The filter switch setting is successful, but the filter parameter setting fails");
+          return;
+        }
+        enable_spatial_fast_filter_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "SpatialModerateFilter") {
+        auto spatial_moderate_filter = existing_filter->as<ob::SpatialModerateFilter>();
+        spatial_moderate_filter->enable(request->filter_enable);
+        if (request->filter_param.size() > 2) {
+          OBSpatialModerateFilterParams params{};
+          params.disp_diff = request->filter_param[0];
+          params.magnitude = request->filter_param[1];
+          params.radius = request->filter_param[2];
+          spatial_moderate_filter->setFilterParams(params);
+          RCLCPP_INFO_STREAM(logger_, "Set SpatialModerateFilter params: "
+                                          << "\ndisp_diff:" << params.disp_diff
+                                          << "\nmagnitude:" << static_cast<int>(params.magnitude)
+                                          << "\nradius:" << static_cast<int>(params.radius));
+          spatial_moderate_filter_diff_threshold_ = params.disp_diff;
+          spatial_moderate_filter_magnitude_ = params.magnitude;
+          spatial_moderate_filter_radius_ = params.radius;
+        } else {
+          fail("The filter switch setting is successful, but the filter parameter setting fails");
+          return;
+        }
+        enable_spatial_moderate_filter_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "FalsePositiveFilter") {
+        auto false_positive_filter = existing_filter->as<ob::FalsePositiveFilter>();
+        false_positive_filter->enable(request->filter_enable);
+        enable_false_positive_filter_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "MgcNoiseRemovalFilter") {
+        auto mgc_filter = existing_filter->as<ob::MgcNoiseRemovalFilter>();
+        mgc_filter->enable(request->filter_enable);
+        enable_mgc_noise_removal_filter_ = request->filter_enable;
+      } else if (normalized_request_filter_name == "LutNoiseRemovalFilter") {
+        auto lut_filter = existing_filter->as<ob::LutNoiseRemovalFilter>();
+        lut_filter->enable(request->filter_enable);
+        enable_lut_noise_removal_filter_ = request->filter_enable;
       } else {
-        response->message =
-            "The filter switch setting is successful, but the filter parameter setting fails";
+        fail(normalized_request_filter_name + " cannot be set");
         return;
       }
-    } else if (request->filter_name == "TemporalFilter") {
-      auto temporal_filter = std::make_shared<ob::TemporalFilter>();
-      temporal_filter->enable(request->filter_enable);
-      depth_filter_list_.push_back(temporal_filter);
-      if (request->filter_param.size() > 1) {
-        temporal_filter->setDiffScale(request->filter_param[0]);
-        temporal_filter->setWeight(request->filter_param[1]);
-        RCLCPP_INFO_STREAM(logger_, "Set temporal filter value to " << request->filter_param[0]
-                                                                    << " - "
-                                                                    << request->filter_param[1]);
-      } else {
-        response->message =
-            "The filter switch setting is successful, but the filter parameter setting fails";
-        return;
-      }
-    } else if (request->filter_name == "SpatialFastFilter") {
-      auto spatial_fast_filter = std::make_shared<ob::SpatialFastFilter>();
-      spatial_fast_filter->enable(request->filter_enable);
-      depth_filter_list_.push_back(spatial_fast_filter);
-      if (request->filter_param.size() > 0) {
-        OBSpatialFastFilterParams params{};
-        params.radius = request->filter_param[0];
-        spatial_fast_filter->setFilterParams(params);
-        RCLCPP_INFO_STREAM(logger_, "Set SpatialFastFilter radius to " << params.radius);
-      } else {
-        response->message =
-            "The filter switch setting is successful, but the filter parameter setting fails";
-        return;
-      }
-
-    } else if (request->filter_name == "SpatialModerateFilter") {
-      auto spatial_moderate_filter = std::make_shared<ob::SpatialModerateFilter>();
-      spatial_moderate_filter->enable(request->filter_enable);
-      depth_filter_list_.push_back(spatial_moderate_filter);
-      if (request->filter_param.size() > 2) {
-        OBSpatialModerateFilterParams params{};
-        params.disp_diff = request->filter_param[0];
-        params.magnitude = request->filter_param[1];
-        params.radius = request->filter_param[2];
-        spatial_moderate_filter->setFilterParams(params);
-        RCLCPP_INFO_STREAM(logger_, "Set SpatialModerateFilter params: "
-                                        << "\ndisp_diff:" << params.disp_diff << "\nmagnitude:"
-                                        << params.magnitude << "\nradius:" << params.radius);
-      } else {
-        response->message =
-            "The filter switch setting is successful, but the filter parameter setting fails";
-        return;
-      }
-    } else if (request->filter_name == "FalsePositiveFilter") {
-      auto false_positive_filter = std::make_shared<ob::FalsePositiveFilter>();
-      false_positive_filter->enable(request->filter_enable);
-      depth_filter_list_.push_back(false_positive_filter);
-    } else {
-      RCLCPP_INFO_STREAM(logger_,
-                         request->filter_name
-                             << "Cannot be set\n"
-                             << "The filter_name value that can be set is "
-                                "DecimationFilter, HDRMerge, SequenceIdFilter, ThresholdFilter, "
-                                "NoiseRemovalFilter, HardwareNoiseRemoval, SpatialAdvancedFilter, "
-                                "SpatialFastFilter, SpatialModerateFilter, FalsePositiveFilter and "
-                                "TemporalFilter");
-      return;
     }
-    for (auto &filter : depth_filter_list_) {
-      std::cout << " - " << filter->getName() << ": "
-                << (filter->isEnabled() ? "enabled" : "disabled") << std::endl;
-      auto configSchemaVec = filter->getConfigSchemaVec();
-      for (auto &configSchema : configSchemaVec) {
-        std::cout << "    - {" << configSchema.name << ", " << configSchema.type << ", "
-                  << configSchema.min << ", " << configSchema.max << ", " << configSchema.step
-                  << ", " << configSchema.def << ", " << configSchema.desc << "}" << std::endl;
-      }
+    filter_status_[normalized_request_filter_name] = static_cast<bool>(request->filter_enable);
+    if (filter_status_pub_) {
+      std_msgs::msg::String msg;
+      msg.data = filter_status_.dump(2);
+      filter_status_pub_->publish(msg);
     }
+    publishDepthFiltersStatus();
     response->success = true;
   } catch (const ob::Error &e) {
-    response->message = e.getMessage();
     response->success = false;
+    response->message = "Failed to set filter: " + orbbec_camera::formatObErrorWithStatus(e);
+    RCLCPP_ERROR_STREAM(logger_,
+                        "Failed to set filter: " << orbbec_camera::formatObErrorWithStatus(e));
   } catch (const std::exception &e) {
-    response->message = e.what();
     response->success = false;
+    response->message = std::string("Failed to set filter: ") + e.what();
+    RCLCPP_ERROR_STREAM(logger_, "Failed to set filter: " << e.what());
   } catch (...) {
-    response->message = "unknown error";
     response->success = false;
+    response->message = "unknown error";
+    RCLCPP_ERROR_STREAM(logger_, "unknown error");
   }
 }
 bool OBCameraNode::isWriteCustomerDataSuccess() const {
