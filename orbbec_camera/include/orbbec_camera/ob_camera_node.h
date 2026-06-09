@@ -883,6 +883,8 @@ class OBCameraNode {
   bool enable_firmware_log_ = false;
   bool enable_color_undistortion_ = false;
   std::shared_ptr<image_publisher> color_undistortion_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr
+      color_undistortion_camera_info_publisher_;
   bool has_first_color_frame_ = false;
   bool use_intra_process_ = false;
   std::string cloud_frame_id_;

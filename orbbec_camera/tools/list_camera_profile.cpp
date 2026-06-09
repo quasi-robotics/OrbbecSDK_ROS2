@@ -14,6 +14,7 @@ namespace {
 struct CliArgs {
   bool help = false;
   std::string serial_number;
+  std::string sdk_log_level = "off";
 };
 
 void printUsage() {
@@ -23,7 +24,14 @@ void printUsage() {
       << "      [--serial_number SN]\n\n"
       << "Parameters:\n"
       << "  --serial_number SN  Select a specific camera by serial number.\n"
-      << "  -h, --help          Show this help message.\n";
+      << "  --enable_sdk_log    Enable SDK file log at debug level under ~/.ros/Log.\n"
+      << "  --sdk_log_level LEVEL\n"
+      << "                      SDK file log level: debug/info/warn/error/fatal/off "
+         "(default: off).\n"
+      << "  -h, --help          Show this help message.\n"
+      << "Examples:\n"
+      << "  ros2 run orbbec_camera list_camera_profile_mode_node -- --enable_sdk_log "
+         "--sdk_log_level debug\n";
 }
 
 bool parseArgs(int argc, char **argv, CliArgs &args, std::string &error) {
@@ -52,7 +60,32 @@ bool parseArgs(int argc, char **argv, CliArgs &args, std::string &error) {
       continue;
     }
 
+    if (current == "--enable_sdk_log") {
+      args.sdk_log_level = "debug";
+      continue;
+    }
+
+    if (current.rfind("--sdk_log_level=", 0) == 0) {
+      args.sdk_log_level = current.substr(std::strlen("--sdk_log_level="));
+      continue;
+    }
+    if (current == "--sdk_log_level") {
+      if (++i >= argc) {
+        error = "--sdk_log_level requires a value";
+        return false;
+      }
+      args.sdk_log_level = argv[i];
+      continue;
+    }
+
     error = "Unknown argument: " + current;
+    return false;
+  }
+
+  const auto log_severity = obLogSeverityFromString(args.sdk_log_level);
+  if (log_severity == OBLogSeverity::OB_LOG_SEVERITY_OFF && args.sdk_log_level != "off" &&
+      args.sdk_log_level != "none") {
+    error = "--sdk_log_level expects one of: debug, info, warn, error, fatal, off";
     return false;
   }
 
@@ -161,6 +194,12 @@ int main(int argc, char **argv) {
   if (args.help) {
     printUsage();
     return 0;
+  }
+
+  const auto sdk_log_path =
+      configureObSdkLoggerForTool("list_camera_profile_mode_node", args.sdk_log_level);
+  if (!sdk_log_path.empty()) {
+    std::cout << "SDK file log enabled: " << sdk_log_path << std::endl;
   }
 
   auto device = initializeDevice(args.serial_number);

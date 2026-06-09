@@ -31,6 +31,7 @@
 #include <sstream>
 #include <iomanip>
 #include <arpa/inet.h>
+#include <string_view>
 
 namespace orbbec_camera {
 inline void LogFatal(const char* file, int line, const std::string& message) {
@@ -162,6 +163,13 @@ rclcpp::Time fromMsToROSTime(uint64_t ms);
 rclcpp::Time fromUsToROSTime(uint64_t us);
 
 std::string getObSDKVersion();
+
+OBLogSeverity obLogSeverityFromString(const std::string_view& log_level);
+
+std::string getRosLogDirectory();
+
+std::string configureObSdkLoggerForTool(const std::string& tool_name,
+                                        const std::string& log_level);
 
 OBFormat OBFormatFromString(const std::string& format);
 

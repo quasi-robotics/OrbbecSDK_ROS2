@@ -1,48 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by
-Stephen Brawner (brawner@gmail.com)
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com)
      Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
-<robot xmlns:xacro="http://ros.org/wiki/xacro" name="gemini335_336Lg">
-    <xacro:property name="mesh_path" value="package://orbbec_description/meshes/gemini335Lg/" />
-
-    <link
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="gemini345Lg">
+    <xacro:property name="mesh_path" value="package://orbbec_description/meshes/gemini345Lg/" />
+  <link
     name="camera_link">
     <inertial>
       <origin
-        xyz="-0.00289247601040677 -0.0017677758607654 0.0142809419586764"
+        xyz="-0.00892631661319327 -0.0411953623128534 -6.74554835164257E-05"
         rpy="0 0 0" />
       <mass
-        value="0.0325749377048239" />
+        value="0.0225056393827557" />
       <inertia
-        ixx="4.2090908565379E-05"
-        ixy="-6.50624838746019E-07"
-        ixz="-2.08039071582348E-08"
-        iyy="4.19290333002548E-06"
-        iyz="1.26504526469951E-07"
-        izz="4.0397995330315E-05" />
+        ixx="3.27548632771085E-05"
+        ixy="1.00838588052088E-08"
+        ixz="-1.47247229793385E-10"
+        iyy="3.25729646992983E-06"
+        iyz="-1.75779219489013E-07"
+        izz="3.12913646878586E-05" />
     </inertial>
     <visual>
       <origin
-        xyz="-0.0117149999999995 -0.0475 -0.0143111800025738"
+        xyz="0 0 0"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}base_link.STL" />
+          filename="${mesh_path}camera_link.STL" />
       </geometry>
       <material
         name="">
         <color
-          rgba="0.749019607843137 0.576470588235294 0.631372549019608 1" />
+          rgba="0.286274509803922 0.619607843137255 0.749019607843137 1" />
       </material>
     </visual>
     <collision>
       <origin
-        xyz="-0.0117149999999995 -0.0475 -0.0143111800025738"
+        xyz="0 0 0"
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}base_link.STL" />
+          filename="${mesh_path}camera_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -50,17 +48,17 @@ Stephen Brawner (brawner@gmail.com)
     name="camera_bottom_screw_frame">
     <inertial>
       <origin
-        xyz="-0.000509549530802827 -0.000723575304053956 0.0135324058538218"
+        xyz="0.00893791053424158 -0.0334047707594224 0.0110870441866524"
         rpy="0 0 0" />
       <mass
-        value="0.00667731245337829" />
+        value="0.0173597661958447" />
       <inertia
-        ixx="6.28717759812297E-06"
-        ixy="-2.63093402952502E-08"
-        ixz="-3.24406818500365E-10"
-        iyy="3.46547116520772E-07"
-        iyz="9.65620190743408E-08"
-        izz="5.98310336335606E-06" />
+        ixx="1.88009660853793E-05"
+        ixy="-4.43021080342314E-07"
+        ixz="-2.9158830164892E-09"
+        iyy="2.53990333445075E-06"
+        iyz="-2.83727821005721E-08"
+        izz="1.75573510554478E-05" />
     </inertial>
     <visual>
       <origin
@@ -73,7 +71,7 @@ Stephen Brawner (brawner@gmail.com)
       <material
         name="">
         <color
-          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+          rgba="0.631372549019608 0.686274509803922 0.749019607843137 1" />
       </material>
     </visual>
     <collision>
@@ -87,15 +85,15 @@ Stephen Brawner (brawner@gmail.com)
     </collision>
   </link>
   <joint
-    name="camera_bottom_screw_joint"
+    name="camera_link_joint"
     type="fixed">
     <origin
-      xyz="-0.0117149999999995 -0.0475 -0.0143111800025738"
+      xyz="0.039695 0.0139999995 0.011"
       rpy="0 0 0" />
     <parent
-      link="camera_link" />
-    <child
       link="camera_bottom_screw_frame" />
+    <child
+      link="camera_link" />
     <axis
       xyz="0 0 0" />
   </joint>
@@ -103,17 +101,17 @@ Stephen Brawner (brawner@gmail.com)
     name="camera_left_ir_frame">
     <inertial>
       <origin
-        xyz="-0.00158020638644197 -1.72113892998871E-08 -1.52265896555797E-07"
+        xyz="-0.00294368828819507 4.99999992797928E-10 -5.94655219848769E-11"
         rpy="0 0 0" />
       <mass
-        value="0.000453167757456349" />
+        value="0.000921175541096741" />
       <inertia
-        ixx="4.34107394943177E-09"
-        ixy="-3.70457372455307E-13"
-        ixz="-1.46474854151394E-13"
-        iyy="4.84011101176503E-09"
-        iyz="2.21976196909763E-14"
-        izz="4.84043649602512E-09" />
+        ixx="1.81535637526192E-08"
+        ixy="-3.44693528328977E-25"
+        ixz="-2.81315054108964E-16"
+        iyy="1.38975394593283E-08"
+        iyz="-1.0298650842081E-33"
+        izz="1.38975394593283E-08" />
     </inertial>
     <visual>
       <origin
@@ -121,12 +119,12 @@ Stephen Brawner (brawner@gmail.com)
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}camera_infra1_frame.STL" />
+          filename="${mesh_path}camera_left_ir_frame.STL" />
       </geometry>
       <material
         name="">
         <color
-          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+          rgba="0.458823529411765 0.447058823529412 0.43921568627451 1" />
       </material>
     </visual>
     <collision>
@@ -135,12 +133,12 @@ Stephen Brawner (brawner@gmail.com)
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}camera_infra1_frame.STL" />
+          filename="${mesh_path}camera_left_ir_frame.STL" />
       </geometry>
     </collision>
   </link>
   <joint
-    name="camera_left_ir_joint"
+    name="camera_left_ir_frame"
     type="fixed">
     <origin
       xyz="0 0 0"
@@ -156,17 +154,17 @@ Stephen Brawner (brawner@gmail.com)
     name="camera_left_ir_optical_frame">
     <inertial>
       <origin
-        xyz="1.72113892998871E-08 1.52265896555812E-07 -0.00158020638644197"
+        xyz="-5.00000006675716E-10 5.94655219568156E-11 -0.00294368828819506"
         rpy="0 0 0" />
       <mass
-        value="0.000453167757456349" />
+        value="0.000921175541096742" />
       <inertia
-        ixx="4.84011101176503E-09"
-        ixy="2.21976196909534E-14"
-        ixz="3.70457372455358E-13"
-        iyy="4.84043649602512E-09"
-        iyz="1.46474854151393E-13"
-        izz="4.34107394943177E-09" />
+        ixx="1.38975394593283E-08"
+        ixy="-1.02986508493708E-33"
+        ixz="3.44693528328977E-25"
+        iyy="1.38975394593283E-08"
+        iyz="2.8131505422727E-16"
+        izz="1.81535637526192E-08" />
     </inertial>
     <visual>
       <origin
@@ -174,12 +172,12 @@ Stephen Brawner (brawner@gmail.com)
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}camera_infra1_optical_frame.STL" />
+          filename="${mesh_path}camera_left_ir_optical_frame.STL" />
       </geometry>
       <material
         name="">
         <color
-          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+          rgba="0.458823529411765 0.447058823529412 0.43921568627451 1" />
       </material>
     </visual>
     <collision>
@@ -188,12 +186,12 @@ Stephen Brawner (brawner@gmail.com)
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}camera_infra1_optical_frame.STL" />
+          filename="${mesh_path}camera_left_ir_optical_frame.STL" />
       </geometry>
     </collision>
   </link>
   <joint
-    name="camera_left_ir_optical_joint"
+    name="camera_left_ir_optical_frame"
     type="fixed">
     <origin
       xyz="0 0 0"
@@ -206,126 +204,20 @@ Stephen Brawner (brawner@gmail.com)
       xyz="0 0 0" />
   </joint>
   <link
-    name="camera_color_frame">
-    <inertial>
-      <origin
-        xyz="-0.00158020000774523 -2.01759723546246E-08 -1.59601568159221E-07"
-        rpy="0 0 0" />
-      <mass
-        value="0.000453166139060251" />
-      <inertia
-        ixx="4.34106103694204E-09"
-        ixy="-3.74557114274145E-13"
-        ixz="-1.54573397796035E-13"
-        iyy="4.84009698974187E-09"
-        iyz="1.91083540162802E-14"
-        izz="4.84042884844639E-09" />
-    </inertial>
-    <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="${mesh_path}camera_color_frame.STL" />
-      </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.501960784313725 0.250980392156863 0.250980392156863 1" />
-      </material>
-    </visual>
-    <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="${mesh_path}camera_color_frame.STL" />
-      </geometry>
-    </collision>
-  </link>
-  <joint
-    name="camera_color_joint"
-    type="fixed">
-    <origin
-      xyz="0 -0.023749999701976776 0"
-      rpy="0 0 0" />
-    <parent
-      link="camera_depth_frame" />
-    <child
-      link="camera_color_frame" />
-    <axis
-      xyz="0 0 0" />
-  </joint>
-  <link
-    name="camera_color_optical_frame">
-    <inertial>
-      <origin
-        xyz="2.01759723546246E-08 1.59601568105527E-07 -0.00158020000774523"
-        rpy="0 0 0" />
-      <mass
-        value="0.000453166139060251" />
-      <inertia
-        ixx="4.84009698974187E-09"
-        ixy="1.91083540162691E-14"
-        ixz="3.74557114274215E-13"
-        iyy="4.84042884844639E-09"
-        iyz="1.54573397779039E-13"
-        izz="4.34106103694204E-09" />
-    </inertial>
-    <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="${mesh_path}camera_color_optical_frame.STL" />
-      </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.501960784313725 0.250980392156863 0.250980392156863 1" />
-      </material>
-    </visual>
-    <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="${mesh_path}camera_color_optical_frame.STL" />
-      </geometry>
-    </collision>
-  </link>
-  <joint
-    name="camera_color_optical_joint"
-    type="fixed">
-    <origin
-      xyz="0 0 0"
-      rpy="-1.57079632679486 0 -1.5707963267949" />
-    <parent
-      link="camera_color_frame" />
-    <child
-      link="camera_color_optical_frame" />
-    <axis
-      xyz="0 0 0" />
-  </joint>
-  <link
     name="camera_right_ir_frame">
     <inertial>
       <origin
-        xyz="-0.00158020638644197 -1.7211389306826E-08 -1.5226589655147E-07"
+        xyz="-0.00294368828819506 0 -5.59465521922963E-10"
         rpy="0 0 0" />
       <mass
-        value="0.00045316775745635" />
+        value="0.000921175541096741" />
       <inertia
-        ixx="4.34107394943178E-09"
-        ixy="-3.70457372454612E-13"
-        ixz="-1.46474854155703E-13"
-        iyy="4.84011101176504E-09"
-        iyz="2.21976196913668E-14"
-        izz="4.84043649602513E-09" />
+        ixx="1.81535637526192E-08"
+        ixy="-3.44693528328977E-25"
+        ixz="-2.81315054152356E-16"
+        iyy="1.38975394593283E-08"
+        iyz="-1.02986508510413E-33"
+        izz="1.38975394593283E-08" />
     </inertial>
     <visual>
       <origin
@@ -333,12 +225,12 @@ Stephen Brawner (brawner@gmail.com)
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}camera_infra2_frame.STL" />
+          filename="${mesh_path}camera_right_ir_frame.STL" />
       </geometry>
       <material
         name="">
         <color
-          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+          rgba="0.458823529411765 0.447058823529412 0.43921568627451 1" />
       </material>
     </visual>
     <collision>
@@ -347,15 +239,15 @@ Stephen Brawner (brawner@gmail.com)
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}camera_infra2_frame.STL" />
+          filename="${mesh_path}camera_right_ir_frame.STL" />
       </geometry>
     </collision>
   </link>
   <joint
-    name="camera_right_ir_joint"
+    name="camera_right_ir_frame"
     type="fixed">
     <origin
-      xyz="0 -0.095 0"
+      xyz="0 -0.088 0"
       rpy="0 0 0" />
     <parent
       link="camera_depth_frame" />
@@ -368,17 +260,17 @@ Stephen Brawner (brawner@gmail.com)
     name="camera_right_ir_optical_frame">
     <inertial>
       <origin
-        xyz="1.7211389306826E-08 1.52265896497699E-07 -0.00158020638644197"
+        xyz="0 5.59465521977332E-10 -0.00294368828819506"
         rpy="0 0 0" />
       <mass
-        value="0.00045316775745635" />
+        value="0.000921175541096741" />
       <inertia
-        ixx="4.84011101176504E-09"
-        ixy="2.21976196913637E-14"
-        ixz="3.70457372454685E-13"
-        iyy="4.84043649602512E-09"
-        iyz="1.46474854138719E-13"
-        izz="4.34107394943178E-09" />
+        ixx="1.38975394593283E-08"
+        ixy="-1.02986508413216E-33"
+        ixz="3.44693528328977E-25"
+        iyy="1.38975394593283E-08"
+        iyz="2.8131505407876E-16"
+        izz="1.81535637526192E-08" />
     </inertial>
     <visual>
       <origin
@@ -386,12 +278,12 @@ Stephen Brawner (brawner@gmail.com)
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}camera_infra2_optical_frame.STL" />
+          filename="${mesh_path}camera_right_ir_optical_frame.STL" />
       </geometry>
       <material
         name="">
         <color
-          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+          rgba="0.458823529411765 0.447058823529412 0.43921568627451 1" />
       </material>
     </visual>
     <collision>
@@ -400,16 +292,16 @@ Stephen Brawner (brawner@gmail.com)
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="${mesh_path}camera_infra2_optical_frame.STL" />
+          filename="${mesh_path}camera_right_ir_optical_frame.STL" />
       </geometry>
     </collision>
   </link>
   <joint
-    name="camera_right_ir_optical_joint"
+    name="camera_right_ir_optical_frame"
     type="fixed">
     <origin
       xyz="0 0 0"
-      rpy="-1.57079632679486 0 -1.5707963267949" />
+      rpy="-1.5707963267949 0 -1.5707963267949" />
     <parent
       link="camera_right_ir_frame" />
     <child
@@ -418,20 +310,126 @@ Stephen Brawner (brawner@gmail.com)
       xyz="0 0 0" />
   </joint>
   <link
-    name="camera_imu_frame">
+    name="camera_color_frame">
     <inertial>
       <origin
-        xyz="-0.000485747949726976 -9.01982197890061E-07 -5.03896938954429E-07"
+        xyz="-0.00321027945431743 9.00165896683403E-11 5.37104607625836E-11"
         rpy="0 0 0" />
       <mass
-        value="1.12241987710975E-05" />
+        value="0.00128366060089404" />
       <inertia
-        ixx="2.18588933476699E-11"
-        ixy="-6.98281572974588E-20"
-        ixz="9.51263088105533E-24"
-        iyy="1.02152608199458E-11"
-        iyz="3.0508583355698E-24"
-        izz="1.34030857613463E-11" />
+        ixx="2.6533618139805E-08"
+        ixy="-3.84539876604891E-16"
+        ixz="6.34689842973081E-16"
+        iyy="2.41480807907502E-08"
+        iyz="-1.37568595195541E-14"
+        izz="2.41486930542313E-08" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="${mesh_path}camera_color_frame.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="${mesh_path}camera_color_frame.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="camera_color_frame"
+    type="fixed">
+    <origin
+      xyz="-0.0003099 -0.036 0"
+      rpy="0 0 0" />
+    <parent
+      link="camera_depth_frame" />
+    <child
+      link="camera_color_frame" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="camera_color_optical_frame">
+    <inertial>
+      <origin
+        xyz="-9.00165896683403E-11 -5.37104609114104E-11 -0.00321027945431743"
+        rpy="0 0 0" />
+      <mass
+        value="0.00128366060089404" />
+      <inertia
+        ixx="2.41480807907502E-08"
+        ixy="-1.37568595195541E-14"
+        ixz="3.84539876573512E-16"
+        iyy="2.41486930542313E-08"
+        iyz="-6.34689842767368E-16"
+        izz="2.6533618139805E-08" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="${mesh_path}camera_color_optical_frame.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="${mesh_path}camera_color_optical_frame.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="camera_color_optical_frame"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="-1.5707963267949 0 -1.5707963267949" />
+    <parent
+      link="camera_color_frame" />
+    <child
+      link="camera_color_optical_frame" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="camera_IMU_frame">
+    <inertial>
+      <origin
+        xyz="-0.000500000000000032 -3.46944695195361E-18 4.33680868994202E-19"
+        rpy="0 0 0" />
+      <mass
+        value="1.90463999999998E-05" />
+      <inertia
+        ixx="6.35718041599951E-11"
+        ixy="-6.76392480056357E-28"
+        ixz="-1.50788132496645E-28"
+        iyy="4.31946956799972E-11"
+        iyz="0"
+        izz="2.35515084799982E-11" />
     </inertial>
     <visual>
       <origin
@@ -458,15 +456,15 @@ Stephen Brawner (brawner@gmail.com)
     </collision>
   </link>
   <joint
-    name="camera_imu_joint"
+    name="camera_IMU_frame"
     type="fixed">
     <origin
-      xyz="-0.01425 -0.011312 -0.0006871"
+      xyz="-0.025295 -0.0240874 -0.0022324"
       rpy="0 0 0" />
     <parent
       link="camera_depth_frame" />
     <child
-      link="camera_imu_frame" />
+      link="camera_IMU_frame" />
     <axis
       xyz="0 0 0" />
   </joint>
@@ -474,17 +472,17 @@ Stephen Brawner (brawner@gmail.com)
     name="camera_depth_frame">
     <inertial>
       <origin
-        xyz="-0.00158020638644197 -1.72113892998871E-08 -1.52265896555784E-07"
+        xyz="-0.00294368828819507 4.99999992797928E-10 -5.9465521983123E-11"
         rpy="0 0 0" />
       <mass
-        value="0.000453167757456349" />
+        value="0.000921175541096741" />
       <inertia
-        ixx="4.34107394943177E-09"
-        ixy="-3.70457372455296E-13"
-        ixz="-1.46474854151391E-13"
-        iyy="4.84011101176503E-09"
-        iyz="2.21976196909582E-14"
-        izz="4.84043649602512E-09" />
+        ixx="1.81535637526192E-08"
+        ixy="-3.44693528328977E-25"
+        ixz="-2.8131505413785E-16"
+        iyy="1.38975394593283E-08"
+        iyz="-1.02986508542306E-33"
+        izz="1.38975394593283E-08" />
     </inertial>
     <visual>
       <origin
@@ -497,7 +495,7 @@ Stephen Brawner (brawner@gmail.com)
       <material
         name="">
         <color
-          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+          rgba="0.458823529411765 0.447058823529412 0.43921568627451 1" />
       </material>
     </visual>
     <collision>
@@ -511,7 +509,7 @@ Stephen Brawner (brawner@gmail.com)
     </collision>
   </link>
   <joint
-    name="camera_depth_joint"
+    name="camera_depth_frame"
     type="fixed">
     <origin
       xyz="0 0 0"

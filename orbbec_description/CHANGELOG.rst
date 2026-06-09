@@ -5,6 +5,35 @@ Changelog for package orbbec_description
 Forthcoming
 -----------
 
+2.8.6 (2026-04-30)
+------------------
+* Update URDF collision origins and frame definitions for Gemini models.
+* Update package version.
+* Contributors: ob-yalian, slz
+
+2.7.6 (2026-02-13)
+------------------
+* Update package version.
+* Contributors: ob-yalian
+
+2.7.2 (2026-01-22)
+------------------
+* Update URDF joint names and frame relationships for consistency.
+* Update package version.
+* Contributors: ob-yalian
+
+2.6.3 (2025-12-31)
+------------------
+* Rename URDF files from ``*.xarco`` to ``*.xacro`` and update camera frames/joints.
+* Add ``test_femto_bolt.urdf.xacro``.
+* Add changelog and update package version.
+* Contributors: ob-yalian, obyalian, slz
+
+2.5.4 (2025-10-23)
+------------------
+* Update package version.
+* Contributors: obyalian
+
 2.4.7 (2025-09-01)
 ------------------
 * Add Gemini 335Le in orbbec_description

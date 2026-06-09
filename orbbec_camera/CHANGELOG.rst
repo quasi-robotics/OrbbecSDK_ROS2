@@ -4,13 +4,49 @@ Changelog for package orbbec_camera
 
 Forthcoming
 -----------
-* Update OrbbecSDK to v2.5.5
-* add new launch files and benchmark tools
-* Add new features: forceIp, ISP denoising, extrinsic control, etc.
-* Improve parameters and defaults
-* Fix parameter typos, remove deprecated functions, and other bug fixes
 
-* Contributors: obyalian, slz, xiexun
+2.8.6 (2026-04-30)
+------------------
+* Update OrbbecSDK from v2.7.6 to v2.8.6.
+* Add Gemini 305g support, Gemini 305 dual-color updates, and Gemini2L dual IR configuration.
+* Add ``depth_filters/status``, disparity control services, firmware log control, and frame timestamp CSV logging.
+* Improve ``ip_config_tool``, firmware update tooling, SDK/log output, and ``set_filter`` stability.
+* Fix time-sync, undistortion, AE ROI, Gemini 338 PID naming, and launch/configuration issues.
+* Contributors: ob-yalian, slz, Kotaro Yoshimoto
+
+2.7.6 (2026-02-13)
+------------------
+* Update OrbbecSDK from v2.7.2 to v2.7.6.
+* Add Gemini 340 preset firmware update and False Positive Filter support.
+* Add color preset support and configurable SDK log file names.
+* Fix occasional hot-plug crashes during diagnostic updates.
+* Contributors: ob-yalian, slz
+
+2.7.2 (2026-01-22)
+------------------
+* Update OrbbecSDK from v2.6.3 to v2.7.2.
+* Add Gemini 305 support, including hardware decimation, dual color streams, and metadata publishing.
+* Add AE/sports mode services, left/right color controls, and decimation factor handling.
+* Update logging and Gemini 435Le preset handling; fix point cloud decimation and launch/stream issues.
+* Contributors: ob-yalian, slz
+
+2.6.3 (2025-12-31)
+------------------
+* Update OrbbecSDK from v2.5.5 to v2.6.3.
+* Add Pulsar ME450/SL450 lidar support, IMU publishing, and scan/point cloud updates.
+* Add point cloud decimation services, ``get_laser_status``, ``log_file_name``, image transport controls, and Gemini 435Le preset resolution config.
+* Improve 330-series firmware update handling and intra-camera sync defaults.
+* Fix IR exposure, undistortion projection, hardware D2C, force IP, IMU data, and device status publishing issues.
+* Contributors: ob-yalian, jj, slz, xiexun, obyalian
+
+2.5.4 (2025-10-23)
+------------------
+* Update OrbbecSDK from v2.4.11 to v2.5.5.
+* Add Astra Mini Pro/S Pro, Gemini 345/345Lg support, and related launch files.
+* Add network Force IP tooling, Y12C4/Gemini 435Le metadata, device status, stream enable, and user calibration interfaces.
+* Add synchronization options, ``image_sync_example_node``, color controls, extrinsic publishing control, and benchmark tools.
+* Fix parameter spelling, Gemini 330 HDR defaults, Gemini 435Le behavior, callbacks, cv_bridge includes, and udev installation.
+* Contributors: obyalian, xiexun, slz, Christian Rauch
 
 2.4.7 (2025-09-01)
 ------------------

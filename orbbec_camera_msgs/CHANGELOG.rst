@@ -4,11 +4,31 @@ Changelog for package orbbec_camera_msgs
 
 Forthcoming
 -----------
-* Add DeviceStatus.msg
-* Add GetUserCalibParams.srv
-* Add SetUserCalibParams.srv
-* Add string current_sdk_version field to DeviceInfo.msg
-* Contributors: obyalian, slz, xiexun
+
+2.8.6 (2026-04-30)
+------------------
+* Add depth filter status message types: ``DepthFilterParam.msg``, ``DepthFilterState.msg``, and ``DepthFiltersStatus.msg``.
+* Contributors: ob-yalian
+
+2.7.6 (2026-02-13)
+------------------
+* Update package version.
+* Contributors: ob-yalian
+
+2.7.2 (2026-01-22)
+------------------
+* Update package version.
+* Contributors: ob-yalian
+
+2.6.3 (2025-12-31)
+------------------
+* Add changelog and update package version.
+* Contributors: ob-yalian, obyalian, slz
+
+2.5.4 (2025-10-23)
+------------------
+* Add device status message, user calibration services, and SDK/hardware version fields in ``DeviceInfo.msg``.
+* Contributors: xiexun, obyalian, slz
 
 2.4.7 (2025-09-01)
 ------------------

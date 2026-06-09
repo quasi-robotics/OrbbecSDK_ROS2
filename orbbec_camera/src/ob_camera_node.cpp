@@ -3085,6 +3085,10 @@ void OBCameraNode::setupPublishers() {
                           camera_info_qos_profile));
     }
     if (stream_index == COLOR && enable_color_undistortion_) {
+      color_undistortion_camera_info_publisher_ = node_->create_publisher<CameraInfo>(
+          "color/camera_info_undistorted",
+          rclcpp::QoS(rclcpp::QoSInitialization::from_rmw(camera_info_qos_profile),
+                      camera_info_qos_profile));
       if (use_intra_process_) {
         color_undistortion_publisher_ = std::make_shared<image_rcl_publisher>(
             *node_, "color/image_undistorted", image_qos_profile);
@@ -4299,11 +4303,28 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
     undistorted_image_msg->step = width * unit_step_size_[stream_index];
     undistorted_image_msg->header.frame_id = frame_id;
     color_undistortion_publisher_->publish(std::move(undistorted_image_msg));
-    // Update intrinsic with the new camera matrix from undistortion
-    camera_info.p.at(0) = undistort_result.new_intrinsic.fx;
-    camera_info.p.at(5) = undistort_result.new_intrinsic.fy;
-    camera_info.p.at(2) = undistort_result.new_intrinsic.cx;
-    camera_info.p.at(6) = undistort_result.new_intrinsic.cy;
+
+    if (color_undistortion_camera_info_publisher_) {
+      auto undistorted_camera_info = camera_info;
+      const auto distortion_coeff_count =
+          undistorted_camera_info.d.empty() ? 5 : undistorted_camera_info.d.size();
+      undistorted_camera_info.d.assign(distortion_coeff_count, 0.0);
+      undistorted_camera_info.distortion_model = sensor_msgs::distortion_models::PLUMB_BOB;
+      undistorted_camera_info.roi.do_rectify = false;
+      undistorted_camera_info.k.fill(0.0);
+      undistorted_camera_info.k.at(0) = undistort_result.new_intrinsic.fx;
+      undistorted_camera_info.k.at(4) = undistort_result.new_intrinsic.fy;
+      undistorted_camera_info.k.at(2) = undistort_result.new_intrinsic.cx;
+      undistorted_camera_info.k.at(5) = undistort_result.new_intrinsic.cy;
+      undistorted_camera_info.k.at(8) = 1.0;
+      undistorted_camera_info.p.fill(0.0);
+      undistorted_camera_info.p.at(0) = undistort_result.new_intrinsic.fx;
+      undistorted_camera_info.p.at(5) = undistort_result.new_intrinsic.fy;
+      undistorted_camera_info.p.at(2) = undistort_result.new_intrinsic.cx;
+      undistorted_camera_info.p.at(6) = undistort_result.new_intrinsic.cy;
+      undistorted_camera_info.p.at(10) = 1.0;
+      color_undistortion_camera_info_publisher_->publish(undistorted_camera_info);
+    }
   }
 
   CHECK(camera_info_publishers_.count(stream_index) > 0);
@@ -4314,23 +4335,25 @@ void OBCameraNode::onNewFrameCallback(const std::shared_ptr<ob::Frame> &frame,
     auto depth_scale = video_frame->as<ob::DepthFrame>()->getValueScale();
     image = image * depth_scale;
   }
-  sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
-
-  cv_bridge::CvImage(std_msgs::msg::Header(), encoding_[stream_index], image)
-      .toImageMsg(*image_msg);
-  CHECK_NOTNULL(image_msg.get());
-  image_msg->header.stamp = timestamp;
-  image_msg->is_bigendian = false;
-  image_msg->step = width * unit_step_size_[stream_index];
-  image_msg->header.frame_id = frame_id;
   CHECK(image_publishers_.count(stream_index) > 0);
-  saveImageToFile(stream_index, image, *image_msg);
   if (stream_index == COLOR) {
     fps_delay_status_color_->tick(frame_timestamp);
   } else if (stream_index == DEPTH) {
     fps_delay_status_depth_->tick(frame_timestamp);
   }
-  if (has_raw_image_subscriber) {
+  if (has_raw_image_subscriber || save_images_[stream_index]) {
+    sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+    cv_bridge::CvImage(std_msgs::msg::Header(), encoding_[stream_index], image)
+        .toImageMsg(*image_msg);
+    CHECK_NOTNULL(image_msg.get());
+    image_msg->header.stamp = timestamp;
+    image_msg->is_bigendian = false;
+    image_msg->step = width * unit_step_size_[stream_index];
+    image_msg->header.frame_id = frame_id;
+    saveImageToFile(stream_index, image, *image_msg);
+    if (!has_raw_image_subscriber) {
+      return;
+    }
     if (frame_timestamp_csv_logger_ && frame_timestamp_csv_logger_->enabled() &&
         (stream_index == COLOR || stream_index == DEPTH)) {
       frame_timestamp_csv_logger_->recordPreImagePublish(stream_index.first, frame,
