@@ -2656,6 +2656,13 @@ void OBCameraNode::getParameters() {
   setAndGetNodeParameter<int>(spatial_filter_diff_threshold_, "spatial_filter_diff_threshold", -1);
   setAndGetNodeParameter<int>(spatial_filter_magnitude_, "spatial_filter_magnitude", -1);
   setAndGetNodeParameter<int>(spatial_filter_radius_, "spatial_filter_radius", -1);
+  setAndGetNodeParameter<int>(spatial_fast_filter_radius_, "spatial_fast_filter_radius", -1);
+  setAndGetNodeParameter<int>(spatial_moderate_filter_diff_threshold_,
+                              "spatial_moderate_filter_diff_threshold", -1);
+  setAndGetNodeParameter<int>(spatial_moderate_filter_magnitude_,
+                              "spatial_moderate_filter_magnitude", -1);
+  setAndGetNodeParameter<int>(spatial_moderate_filter_radius_, "spatial_moderate_filter_radius",
+                              -1);
   setAndGetNodeParameter<float>(temporal_filter_diff_threshold_, "temporal_filter_diff_threshold",
                                 -1.0);
   setAndGetNodeParameter<float>(temporal_filter_weight_, "temporal_filter_weight", -1.0);
