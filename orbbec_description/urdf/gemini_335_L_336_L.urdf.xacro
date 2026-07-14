@@ -521,4 +521,64 @@
     <axis
       xyz="0 0 0" />
   </joint>
+  <link
+    name="camera_accel_frame" />
+  <joint
+    name="camera_accel_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="camera_IMU_frame" />
+    <child
+      link="camera_accel_frame" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="camera_accel_optical_frame" />
+  <joint
+    name="camera_accel_optical_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="camera_accel_frame" />
+    <child
+      link="camera_accel_optical_frame" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="camera_gyro_frame" />
+  <joint
+    name="camera_gyro_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="camera_IMU_frame" />
+    <child
+      link="camera_gyro_frame" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="camera_gyro_optical_frame" />
+  <joint
+    name="camera_gyro_optical_joint"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="-1.5708 0 -1.5708" />
+    <parent
+      link="camera_gyro_frame" />
+    <child
+      link="camera_gyro_optical_frame" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
 </robot>

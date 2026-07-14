@@ -322,4 +322,37 @@ Stephen Brawner (brawner@gmail.com)
         <child link="camera_depth_optical_frame" />
         <axis xyz="0 0 0" />
     </joint>
+
+    <link name="camera_accel_frame" />
+    <link name="camera_accel_optical_frame" />
+    <link name="camera_gyro_frame" />
+    <link name="camera_gyro_optical_frame" />
+
+    <joint name="camera_accel_joint" type="fixed">
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <parent link="camera_link" />
+        <child link="camera_accel_frame" />
+        <axis xyz="0 0 0" />
+    </joint>
+
+    <joint name="camera_accel_optical_joint" type="fixed">
+        <origin xyz="0 0 0" rpy="-1.5707963267949 0 -1.5707963267949" />
+        <parent link="camera_accel_frame" />
+        <child link="camera_accel_optical_frame" />
+        <axis xyz="0 0 0" />
+    </joint>
+
+    <joint name="camera_gyro_joint" type="fixed">
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <parent link="camera_link" />
+        <child link="camera_gyro_frame" />
+        <axis xyz="0 0 0" />
+    </joint>
+
+    <joint name="camera_gyro_optical_joint" type="fixed">
+        <origin xyz="0 0 0" rpy="-1.5707963267949 0 -1.5707963267949" />
+        <parent link="camera_gyro_frame" />
+        <child link="camera_gyro_optical_frame" />
+        <axis xyz="0 0 0" />
+    </joint>
 </robot>
