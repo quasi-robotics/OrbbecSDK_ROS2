@@ -74,7 +74,6 @@ class StartBenchmark : public rclcpp::Node {
   std::vector<rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr>
       color_point_cloud_subs_;
 
-
   std::vector<std::string> camera_name_;
   std::vector<std::string> color_topics_;
   std::vector<std::string> depth_topics_;

@@ -5,6 +5,10 @@ Changelog for package orbbec_camera_msgs
 Forthcoming
 -----------
 
+2.9.3 (2026-07-17)
+------------------
+* Add interfaces for device configuration, SDK bag recording, and runtime stream profile control.
+
 2.8.6 (2026-04-30)
 ------------------
 * Add depth filter status message types: ``DepthFilterParam.msg``, ``DepthFilterState.msg``, and ``DepthFiltersStatus.msg``.

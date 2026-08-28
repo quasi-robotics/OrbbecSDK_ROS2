@@ -31,6 +31,8 @@
 #include <std_srvs/srv/empty.hpp>
 #include <backward_ros/backward.hpp>
 #include "libobsensor/hpp/Device.hpp"
+#include "libobsensor/hpp/RecordPlayback.hpp"
+#include "orbbec_camera_msgs/srv/set_bag_recording.hpp"
 
 namespace orbbec_camera {
 
@@ -57,6 +59,10 @@ class OBCameraNodeDriver : public rclcpp::Node {
 
   void initializeDevice(const std::shared_ptr<ob::Device>& device);
 
+  void initializeBagPlayback();
+
+  void exportBagPresetJson(const std::string& bag_path);
+
   void startDevice(const std::shared_ptr<ob::DeviceList>& list);
 
   void connectNetDevice(const std::string& net_device_ip, int net_device_port);
@@ -77,6 +83,10 @@ class OBCameraNodeDriver : public rclcpp::Node {
 
   void rebootDeviceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> request,
                             std::shared_ptr<std_srvs::srv::Empty::Response> response);
+
+  void setBagRecordingCallback(
+      const std::shared_ptr<orbbec_camera_msgs::srv::SetBagRecording::Request> request,
+      std::shared_ptr<orbbec_camera_msgs::srv::SetBagRecording::Response> response);
   void presetUpdateCallback(bool firstCall, OBFwUpdateState state, const char* message,
                             uint8_t percent);
   void updatePresetFirmware(std::string path);
@@ -87,6 +97,8 @@ class OBCameraNodeDriver : public rclcpp::Node {
 
   OBDeviceAccessMode stringToAccessMode(const std::string& mode_str);
   std::string accessModeToString(OBDeviceAccessMode mode);
+  OBClockType timestampClockTypeFromString(const std::string& clock_type_str);
+  std::string timestampClockTypeToString(OBClockType clock_type);
 
  private:
   const rclcpp::NodeOptions node_options_;
@@ -131,8 +143,11 @@ class OBCameraNodeDriver : public rclcpp::Node {
   int connection_delay_ = 100;
   bool enable_sync_host_time_ = true;
   std::chrono::milliseconds time_sync_period_{6000};
+  std::string timestamp_clock_type_str_;
   std::string preset_firmware_path_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reboot_device_srv_ = nullptr;
+  rclcpp::Service<orbbec_camera_msgs::srv::SetBagRecording>::SharedPtr set_bag_recording_srv_ =
+      nullptr;
   std::chrono::time_point<std::chrono::system_clock> start_time_;
   std::string extension_path_;
   static backward::SignalHandling sh;  // for stack trace
@@ -140,6 +155,7 @@ class OBCameraNodeDriver : public rclcpp::Node {
   std::atomic<bool> firmware_update_success_{false};
   std::atomic<bool> need_reupdate_{false};
   std::atomic<bool> is_reupdating_{false};  // Flag to track if we're in reupdate process
+  std::atomic<bool> delay_stream_start_after_reconnect_{false};
   rclcpp::TimerBase::SharedPtr device_status_timer_ = nullptr;
   int device_status_interval_hz = 2;  // 2Hz
   rclcpp::Publisher<orbbec_camera_msgs::msg::DeviceStatus>::SharedPtr device_status_pub_ = nullptr;
@@ -152,5 +168,13 @@ class OBCameraNodeDriver : public rclcpp::Node {
   std::string force_ip_gateway_;      // e.g. "192.168.1.1"
   std::atomic<bool> force_ip_success_{false};
   std::string device_type_;
+  // bag recording
+  std::string bag_record_filename_;
+  bool bag_record_compression_ = true;
+  std::shared_ptr<ob::RecordDevice> record_device_ = nullptr;
+  // bag playback
+  std::string bag_filename_;
+  bool bag_loop_ = false;
+  std::shared_ptr<ob::PlaybackDevice> playback_device_ = nullptr;
 };
 }  // namespace orbbec_camera

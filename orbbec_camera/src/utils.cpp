@@ -46,7 +46,11 @@ OBLogSeverity obLogSeverityFromString(const std::string_view &log_level) {
   return OBLogSeverity::OB_LOG_SEVERITY_OFF;
 }
 
-std::string getRosLogDirectory() {
+std::string getObSdkLogDirectory() {
+  const char *log_dir_override = std::getenv("ORBBEC_LOG_DIR");
+  if (log_dir_override && log_dir_override[0] != '\0') {
+    return (std::filesystem::path(log_dir_override) / "Log").string();
+  }
   const char *home = std::getenv("HOME");
   const std::filesystem::path home_dir = home != nullptr ? home : "";
   return (home_dir / ".ros" / "Log").string();
@@ -63,7 +67,7 @@ std::string configureObSdkLoggerForTool(const std::string &tool_name,
     return "";
   }
 
-  const std::filesystem::path log_dir(getRosLogDirectory());
+  const std::filesystem::path log_dir(getObSdkLogDirectory());
   std::filesystem::create_directories(log_dir);
 
   const auto now = std::chrono::system_clock::now();
@@ -304,7 +308,7 @@ orbbec_camera_msgs::msg::Extrinsics obExtrinsicsToMsg(const OBD2CTransform &extr
 }
 
 rclcpp::Time fromMsToROSTime(uint64_t ms) {
-  auto total = static_cast<uint64_t>(ms * 1e6);
+  auto total = ms * 1000000ULL;
   uint64_t sec = total / 1000000000;
   uint64_t nano_sec = total % 1000000000;
   rclcpp::Time stamp(sec, nano_sec);
@@ -312,7 +316,7 @@ rclcpp::Time fromMsToROSTime(uint64_t ms) {
 }
 
 rclcpp::Time fromUsToROSTime(uint64_t us) {
-  auto total = static_cast<uint64_t>(us * 1e3);
+  auto total = us * 1000ULL;
   uint64_t sec = total / 1000000000;
   uint64_t nano_sec = total % 1000000000;
   rclcpp::Time stamp(sec, nano_sec);
@@ -1098,8 +1102,8 @@ UndistortedImageResult undistortImage(const cv::Mat &image, const OBCameraIntrin
     static std::vector<UndistortMapCacheEntry> map_cache;
 
     std::lock_guard<std::mutex> lock(cache_mutex);
-    auto cache_it = std::find_if(
-        map_cache.begin(), map_cache.end(), [&](const UndistortMapCacheEntry &entry) {
+    auto cache_it =
+        std::find_if(map_cache.begin(), map_cache.end(), [&](const UndistortMapCacheEntry &entry) {
           return entry.width == image.cols && entry.height == image.rows &&
                  entry.image_type == image.type() && isSameIntrinsic(entry.intrinsic, intrinsic) &&
                  isSameDistortion(entry.distortion, distortion);
@@ -1113,9 +1117,8 @@ UndistortedImageResult undistortImage(const cv::Mat &image, const OBCameraIntrin
       entry.intrinsic = intrinsic;
       entry.distortion = distortion;
 
-      cv::Mat camera_matrix =
-          (cv::Mat_<double>(3, 3) << intrinsic.fx, 0.0, intrinsic.cx, 0.0, intrinsic.fy,
-           intrinsic.cy, 0.0, 0.0, 1.0);
+      cv::Mat camera_matrix = (cv::Mat_<double>(3, 3) << intrinsic.fx, 0.0, intrinsic.cx, 0.0,
+                               intrinsic.fy, intrinsic.cy, 0.0, 0.0, 1.0);
       cv::Mat dist_coeffs =
           (cv::Mat_<double>(8, 1) << distortion.k1, distortion.k2, distortion.p1, distortion.p2,
            distortion.k3, distortion.k4, distortion.k5, distortion.k6);

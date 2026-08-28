@@ -5,6 +5,14 @@ Changelog for package orbbec_camera
 Forthcoming
 -----------
 
+2.9.3 (2026-07-17)
+------------------
+* Update the bundled OrbbecSDK to v2.9.3 and add third-party license files.
+* Add enhanced depth and filtering, SDK bag recording/playback, runtime stream and D2C controls, timestamp clock selection, FPS Boost, and LRM obstacle distance publishing.
+* Extend Gemini 330 preset import/export and improve device enumeration, network configuration, image publishing, undistortion, parameter validation, and dropped-frame logging.
+* Improve Gemini 301 startup stability and fix D2C intrinsics, timestamp CSV recording, and shutdown-time IMU callbacks.
+* Deprecate camera-node firmware upgrade parameters in favor of ``firmware_update_tool``.
+
 2.8.6 (2026-04-30)
 ------------------
 * Update OrbbecSDK from v2.7.6 to v2.8.6.

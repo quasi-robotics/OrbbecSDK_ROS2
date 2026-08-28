@@ -5,6 +5,10 @@ Changelog for package orbbec_description
 Forthcoming
 -----------
 
+2.9.3 (2026-07-17)
+------------------
+* Add URDF models for the Gemini 301 and Gemini 340 series.
+
 2.8.6 (2026-04-30)
 ------------------
 * Update URDF collision origins and frame definitions for Gemini models.

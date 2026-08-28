@@ -296,8 +296,9 @@ void OBLidarNode::setupProfiles() {
         }
 
       } catch (const ob::Error &ex) {
-        RCLCPP_ERROR_STREAM(
-            logger_, "Failed to get " << stream_name_[elem] << "  profile: " << ex.getMessage());
+        RCLCPP_ERROR_STREAM(logger_, "Failed to get "
+                                         << stream_name_[elem] << "  profile: "
+                                         << orbbec_camera::formatObErrorWithStatus(ex));
         RCLCPP_ERROR_STREAM(logger_, "Stream: " << magic_enum::enum_name(elem.first)
                                                 << ", Stream Index: " << elem.second
                                                 << ", Scan Rate: " << rate_[elem]
@@ -1261,9 +1262,9 @@ void OBLidarNode::calcAndPublishStaticTransform() {
         ex = base_stream_profile->getExtrinsicTo(stream_profile_[GYRO]);
         RCLCPP_INFO_STREAM(logger_, "Using GYRO extrinsic for IMU");
       } catch (const ob::Error &e2) {
-        RCLCPP_ERROR_STREAM(
-            logger_, "Failed to get "
-                         << frame_id << " extrinsic from both ACCEL and GYRO: " << e2.getMessage());
+        RCLCPP_ERROR_STREAM(logger_, "Failed to get "
+                                         << frame_id << " extrinsic from both ACCEL and GYRO: "
+                                         << orbbec_camera::formatObErrorWithStatus(e2));
         ex = OBExtrinsic({{1, 0, 0, 0, 1, 0, 0, 0, 1}, {0, 0, 0}});
       }
     }

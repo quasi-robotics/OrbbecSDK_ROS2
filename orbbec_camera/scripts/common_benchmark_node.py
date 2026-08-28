@@ -77,6 +77,11 @@ def parse_camera_names(camera_names):
 
 def make_stat():
     return {"cur": 0.0, "avg": 0.0, "min": float("inf"), "max": float("-inf"), "count": 0, "sum": 0.0}
+
+def estimate_dropped_frames(dt, expected_interval):
+    if expected_interval <= 0 or dt <= 1.5 * expected_interval:
+        return 0
+    return max(1, int(dt / expected_interval) - 1)
 # ----------------------------------------------
 
 class TopicTracker:
@@ -95,8 +100,7 @@ class TopicTracker:
         if self.last_time is not None and avg_fps > 0:
             dt = stamp - self.last_time
             expected_interval = 1.0 / avg_fps
-            if expected_interval > 0 and dt > 1.5 * expected_interval:
-                self.drop_frames += 1
+            self.drop_frames += estimate_dropped_frames(dt, expected_interval)
 
         self.last_time = stamp
 

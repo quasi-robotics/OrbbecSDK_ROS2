@@ -168,7 +168,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'log_level',
-            default_value='none',
+            default_value='info',
             description='Shared SDK and ROS log level: none, debug, info, warn, error, fatal.'
         ),
         DeclareLaunchArgument(
@@ -180,6 +180,11 @@ def generate_launch_description():
             'time_domain',
             default_value='device',  # global, device, system
             description='Timestamp domain: device (device clock), global (time sync), or system (host clock).'
+        ),
+        DeclareLaunchArgument(
+            'timestamp_clock_type',
+            default_value='',
+            description='SDK timestamp clock type: realtime or monotonic, default is realtime.'
         ),
         DeclareLaunchArgument(
             'config_file_path',

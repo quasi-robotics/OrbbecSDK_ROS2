@@ -183,16 +183,18 @@ class ObBenchmark : public rclcpp::Node {
     std::ofstream file;
     file.open(filename, std::ios_base::app);
     if (file.is_open()) {
-      file << "Time,CPU,Memory(MB)" << "\n";
+      file << "Time,CPU,Memory(MB)"
+           << "\n";
       for (int i = skip_number_; i < usage_count_ - 1; i++) {
-        file << current_time_[i] << "," << cpu_usage_[i] << "%" << "," << memory_usage_[i] << "\n";
+        file << current_time_[i] << "," << cpu_usage_[i] << "%"
+             << "," << memory_usage_[i] << "\n";
       }
-      float cpu_average =
-          std::accumulate(cpu_usage_.begin() + skip_number_, cpu_usage_.begin() + usage_count_ - 1, 0.0f) /
-          (usage_count_ - (skip_number_+1));
+      float cpu_average = std::accumulate(cpu_usage_.begin() + skip_number_,
+                                          cpu_usage_.begin() + usage_count_ - 1, 0.0f) /
+                          (usage_count_ - (skip_number_ + 1));
       float memory_average = std::accumulate(memory_usage_.begin() + skip_number_,
                                              memory_usage_.begin() + usage_count_ - 1, 0.0f) /
-                             (usage_count_ - (skip_number_+1));
+                             (usage_count_ - (skip_number_ + 1));
       file << "Average: ," << cpu_average << "%, " << memory_average << "\n";
       RCLCPP_INFO_STREAM(rclcpp::get_logger("ObBenchmark"),
                          "Average: " << cpu_average << "%" << memory_average << "MB");
@@ -206,7 +208,7 @@ class ObBenchmark : public rclcpp::Node {
     usage_count_ = 0;
     ++launch_count_;
   }
-void kill_process(const std::string& process_name) {
+  void kill_process(const std::string& process_name) {
     std::string command = "ps aux | grep " + process_name + " | grep -v grep | awk '{print $2}'";
 
     std::shared_ptr<FILE> pipe(popen(command.c_str(), "r"), pclose);
@@ -230,15 +232,15 @@ void kill_process(const std::string& process_name) {
     }
 
     for (int pid : pids) {
-        if (kill(pid, SIGINT) == 0) {
-          RCLCPP_INFO_STREAM(rclcpp::get_logger("ObBenchmark"),
-                             "Successfully sent SIGINT (Ctrl+C) to process with PID " << pid);
-        } else {
-          RCLCPP_ERROR_STREAM(this->get_logger(),
-                              "Failed to send SIGINT to process with PID " << pid);
-        }
+      if (kill(pid, SIGINT) == 0) {
+        RCLCPP_INFO_STREAM(rclcpp::get_logger("ObBenchmark"),
+                           "Successfully sent SIGINT (Ctrl+C) to process with PID " << pid);
+      } else {
+        RCLCPP_ERROR_STREAM(this->get_logger(),
+                            "Failed to send SIGINT to process with PID " << pid);
+      }
     }
-}
+  }
   void stat_process() {
     const char* ros2_launch = "/opt/ros/humble/bin/ros2";
     std::string start_launch = "ob_benchmark_" + std::to_string(launch_count_) + ".launch.py";
@@ -278,9 +280,8 @@ void kill_process(const std::string& process_name) {
     current_time_.push_back(getCurrentTimes());
     RCLCPP_INFO_STREAM(rclcpp::get_logger("ObBenchmark"),
                        "CurrentTimes: " << current_time_[usage_count_]);
-    RCLCPP_INFO_STREAM(rclcpp::get_logger("ObBenchmark"), "CPU Usage of "
-                                                              << process_name_ << ":"
-                                                              << cpu_usage_[usage_count_] << "%");
+    RCLCPP_INFO_STREAM(rclcpp::get_logger("ObBenchmark"),
+                       "CPU Usage of " << process_name_ << ":" << cpu_usage_[usage_count_] << "%");
     RCLCPP_INFO_STREAM(
         rclcpp::get_logger("ObBenchmark"),
         "Memory Usage of " << process_name_ << ":" << memory_usage_[usage_count_] << "MB");

@@ -16,9 +16,9 @@ time_domain: "global" # global, device, system
 enable_sync_host_time: true
 
 trigger_out_enabled: true
-frames_per_trigger: 0
+frames_per_trigger: 1
 software_trigger_period: 0
-
+enable_fps_boost: false
 
 # color params
 enable_color: true

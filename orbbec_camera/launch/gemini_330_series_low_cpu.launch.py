@@ -42,7 +42,8 @@ def load_parameters(context, args):
     if config_file_path:
         yaml_params = load_yaml(config_file_path)
         default_params = merge_params(default_params, yaml_params)
-    skip_convert = {'config_file_path', 'usb_port', 'serial_number'}
+    skip_convert = {'config_file_path', 'usb_port', 'serial_number', 'bag_record_filename', 'bag_filename',
+                    'enhanced_depth_model_path'}
 
     result = {}
     for key, value in default_params.items():
@@ -75,6 +76,9 @@ def generate_launch_description():
         DeclareLaunchArgument('serial_number', default_value=''),
         DeclareLaunchArgument('usb_port', default_value=''),
         DeclareLaunchArgument('device_num', default_value='1'),
+        DeclareLaunchArgument('bag_record_filename', default_value=''),
+        DeclareLaunchArgument('bag_filename', default_value=''),
+        DeclareLaunchArgument('bag_loop', default_value='false'),
         DeclareLaunchArgument('upgrade_firmware', default_value=''),
         DeclareLaunchArgument('preset_firmware_path', default_value=''),
         DeclareLaunchArgument('load_config_json_file_path', default_value=''),
@@ -103,6 +107,7 @@ def generate_launch_description():
         DeclareLaunchArgument('color_ae_roi_bottom', default_value='-1'),
         DeclareLaunchArgument('color_exposure', default_value='-1'),
         DeclareLaunchArgument('color_gain', default_value='-1'),
+        DeclareLaunchArgument('color_mjpeg_quality', default_value='-1'),
         DeclareLaunchArgument('enable_color_auto_white_balance', default_value='true'),
         DeclareLaunchArgument('color_white_balance', default_value='-1'),
         DeclareLaunchArgument('enable_color_auto_exposure', default_value='true'),
@@ -190,12 +195,12 @@ def generate_launch_description():
         DeclareLaunchArgument('net_device_port', default_value='0'),
         DeclareLaunchArgument('device_access_mode', default_value='Default'), # Default, EA or CA . only for 335le
         DeclareLaunchArgument('exposure_range_mode', default_value='default'),#default, ultimate or regular
-        DeclareLaunchArgument('log_level', default_value='none'),
+        DeclareLaunchArgument('log_level', default_value='info'),
         DeclareLaunchArgument('log_file_name', default_value=''),
         DeclareLaunchArgument('enable_publish_extrinsic', default_value='false'),
         DeclareLaunchArgument('enable_d2c_viewer', default_value='false'),
         DeclareLaunchArgument('disparity_to_depth_mode', default_value='HW'),
-        DeclareLaunchArgument('enable_ldp', default_value='true'),
+        DeclareLaunchArgument('enable_ldp', default_value='false'),
         DeclareLaunchArgument('ldp_power_level', default_value='-1'),
         DeclareLaunchArgument('sync_mode', default_value='standalone'),
         DeclareLaunchArgument('depth_delay_us', default_value='0'),
@@ -203,8 +208,9 @@ def generate_launch_description():
         DeclareLaunchArgument('trigger2image_delay_us', default_value='0'),
         DeclareLaunchArgument('trigger_out_delay_us', default_value='0'),
         DeclareLaunchArgument('trigger_out_enabled', default_value='true'),
+        DeclareLaunchArgument('enable_fps_boost', default_value='false'),
         DeclareLaunchArgument('software_trigger_enabled', default_value='true'),
-        DeclareLaunchArgument('frames_per_trigger', default_value='2'),
+        DeclareLaunchArgument('frames_per_trigger', default_value='1'),
         DeclareLaunchArgument('software_trigger_period', default_value='33'),  # ms
         DeclareLaunchArgument('enable_ptp_config', default_value='false'),#Only for Gemini 335Le
         DeclareLaunchArgument('enable_frame_sync', default_value='true'),
@@ -216,12 +222,17 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_threshold_filter', default_value='false'),
         DeclareLaunchArgument('enable_hardware_noise_removal_filter', default_value='true'),
         DeclareLaunchArgument('enable_noise_removal_filter', default_value='false'),
+        DeclareLaunchArgument('enable_disp_outliers_filter', default_value='false'),
         DeclareLaunchArgument('enable_spatial_filter', default_value='false'),
         DeclareLaunchArgument('enable_temporal_filter', default_value='false'),
         DeclareLaunchArgument('enable_disparity_to_depth', default_value='true'),
         DeclareLaunchArgument('enable_hole_filling_filter', default_value='false'),
         DeclareLaunchArgument('enable_spatial_fast_filter', default_value='false'),
         DeclareLaunchArgument('enable_spatial_moderate_filter', default_value='false'),
+        DeclareLaunchArgument('enable_false_positive_filter', default_value='false'),
+        DeclareLaunchArgument('enable_enhanced_depth', default_value='false'),
+        DeclareLaunchArgument('enhanced_depth_model_path', default_value=''),
+        DeclareLaunchArgument('enhanced_depth_confidence_threshold', default_value='51'),
         DeclareLaunchArgument('decimation_filter_scale', default_value='-1'),
         DeclareLaunchArgument('sequence_id_filter_id', default_value='-1'),
         DeclareLaunchArgument('threshold_filter_max', default_value='-1'),
@@ -250,15 +261,19 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_laser', default_value='true'),
         DeclareLaunchArgument('depth_precision', default_value=''),
         DeclareLaunchArgument('device_preset', default_value='Default'),
-        DeclareLaunchArgument('color_preset', default_value='Default'),# color preset: Default, Warm Biased AWB
+        DeclareLaunchArgument('color_preset', default_value='Default'),# color preset name reported by the device
         DeclareLaunchArgument('retry_on_usb3_detection_failure', default_value='false'),
         DeclareLaunchArgument('laser_energy_level', default_value='-1'),
         DeclareLaunchArgument('enable_sync_host_time', default_value='false'),
         DeclareLaunchArgument('time_sync_period', default_value='6.0'), # seconds
         DeclareLaunchArgument('time_domain', default_value='global'),# global, device, system
-        DeclareLaunchArgument('enable_frame_timestamp_csv', default_value='false'),
+        DeclareLaunchArgument('timestamp_clock_type', default_value=''),# realtime or monotonic, default is realtime.
+        DeclareLaunchArgument('enable_frame_drop_log', default_value='false'),
         DeclareLaunchArgument('frame_timestamp_csv_file', default_value=''),
         DeclareLaunchArgument('enable_color_undistortion', default_value='false'),
+        DeclareLaunchArgument('enable_depth_undistortion', default_value='false'),
+        DeclareLaunchArgument('enable_left_ir_undistortion', default_value='false'),
+        DeclareLaunchArgument('enable_right_ir_undistortion', default_value='false'),
         DeclareLaunchArgument('config_file_path', default_value=''),
         DeclareLaunchArgument('enable_heartbeat', default_value='false'),
         DeclareLaunchArgument('enable_firmware_log', default_value='false'),

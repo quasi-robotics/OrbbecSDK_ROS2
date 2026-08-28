@@ -181,10 +181,12 @@ class SingleServiceBenchmark {
             if (response->success) {
               success++;
               RCLCPP_INFO(nh_->get_logger(), "Call %s %d/%d succeeded (cost: %.2f ms)",
-                      service_name_.c_str(), i + 1, count_, dt);
+                          service_name_.c_str(), i + 1, count_, dt);
             } else {
-              RCLCPP_WARN(nh_->get_logger(), "Call %s %d/%d (cost: %.2f ms) responded with success=false, message='%s'",
-                          service_name_.c_str(), i + 1, count_, dt,response->message.c_str());
+              RCLCPP_WARN(
+                  nh_->get_logger(),
+                  "Call %s %d/%d (cost: %.2f ms) responded with success=false, message='%s'",
+                  service_name_.c_str(), i + 1, count_, dt, response->message.c_str());
             }
           } else {
             success++;

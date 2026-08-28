@@ -17,6 +17,9 @@ def generate_launch_description():
         DeclareLaunchArgument("serial_number", default_value=""),
         DeclareLaunchArgument("usb_port", default_value=""),
         DeclareLaunchArgument("device_num", default_value="1"),
+        DeclareLaunchArgument("bag_record_filename", default_value=""),
+        DeclareLaunchArgument("bag_filename", default_value=""),
+        DeclareLaunchArgument("bag_loop", default_value="false"),
         DeclareLaunchArgument("uvc_backend", default_value="libuvc"),  # libuvc or v4l2
         DeclareLaunchArgument("product_id", default_value=""),
         DeclareLaunchArgument("enable_point_cloud", default_value="true"),
@@ -79,7 +82,7 @@ def generate_launch_description():
         DeclareLaunchArgument("enumerate_net_device", default_value="true"),
         DeclareLaunchArgument("net_device_ip", default_value=""),
         DeclareLaunchArgument("net_device_port", default_value="0"),
-        DeclareLaunchArgument("log_level", default_value="none"),
+        DeclareLaunchArgument("log_level", default_value="info"),
         DeclareLaunchArgument("log_file_name", default_value=""),
         DeclareLaunchArgument("enable_publish_extrinsic", default_value="false"),
         DeclareLaunchArgument("enable_d2c_viewer", default_value="false"),
@@ -117,8 +120,12 @@ def generate_launch_description():
         DeclareLaunchArgument("enable_heartbeat", default_value="false"),
         DeclareLaunchArgument("enable_firmware_log", default_value="false"),
         DeclareLaunchArgument("time_domain", default_value="global"),
-        DeclareLaunchArgument('enable_frame_timestamp_csv', default_value='false'),
+        DeclareLaunchArgument("timestamp_clock_type", default_value=""),  # realtime or monotonic, default is realtime.
+        DeclareLaunchArgument('enable_frame_drop_log', default_value='false'),
         DeclareLaunchArgument('frame_timestamp_csv_file', default_value=''),
+        DeclareLaunchArgument('enable_color_undistortion', default_value='false'),
+        DeclareLaunchArgument('enable_depth_undistortion', default_value='false'),
+        DeclareLaunchArgument('enable_ir_undistortion', default_value='false'),
         DeclareLaunchArgument('device_preset', default_value='Custom'),
 
         # Force IP parameters

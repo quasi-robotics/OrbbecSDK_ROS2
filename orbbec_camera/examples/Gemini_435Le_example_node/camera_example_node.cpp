@@ -17,8 +17,8 @@ class CameraExampleNode : public rclcpp::Node {
     get_params_client_ = this->create_client<orbbec_camera_msgs::srv::GetUserCalibParams>(
         "/camera/get_user_calib_params");
     set_streams_client_ = this->create_client<std_srvs::srv::SetBool>("/camera/set_streams_enable");
-    set_color_ae_roi_client_ = this->create_client<orbbec_camera_msgs::srv::SetArrays>(
-        "/camera/set_color_ae_roi");
+    set_color_ae_roi_client_ =
+        this->create_client<orbbec_camera_msgs::srv::SetArrays>("/camera/set_color_ae_roi");
     get_device_info_client_ =
         this->create_client<orbbec_camera_msgs::srv::GetDeviceInfo>("/camera/get_device_info");
   }
