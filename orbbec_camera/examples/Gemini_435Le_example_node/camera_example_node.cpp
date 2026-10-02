@@ -139,9 +139,9 @@ class CameraExampleNode : public rclcpp::Node {
         "/camera/device_status", 10,
         std::bind(&CameraExampleNode::deviceStatusCallback, this, std::placeholders::_1));
 
-    while (rclcpp::ok()) {
-      rclcpp::spin_some(shared_from_this());
-    }
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(shared_from_this());
+    executor.spin();
   }
 
   // Feature 7: Set Color AE ROI
@@ -193,14 +193,12 @@ class CameraExampleNode : public rclcpp::Node {
   void deviceStatusCallback(const orbbec_camera_msgs::msg::DeviceStatus::SharedPtr msg) {
     RCLCPP_INFO(this->get_logger(), "-------orbbec camera real-time status-------");
     RCLCPP_INFO(this->get_logger(), "--------------------------------------------");
-    RCLCPP_INFO(this->get_logger(), "Color Frame Rate: Cur: %.2f, Avg: %.2f",
-                msg->color_frame_rate_cur, msg->color_frame_rate_avg);
-    RCLCPP_INFO(this->get_logger(), "Depth Frame Rate: Cur: %.2f, Avg: %.2f",
-                msg->depth_frame_rate_cur, msg->depth_frame_rate_avg);
-    RCLCPP_INFO(this->get_logger(), "Color Delay (ms): Cur: %.2f, Avg: %.2f",
-                msg->color_delay_ms_cur, msg->color_delay_ms_avg);
-    RCLCPP_INFO(this->get_logger(), "Depth Delay (ms): Cur: %.2f, Avg: %.2f",
-                msg->depth_delay_ms_cur, msg->depth_delay_ms_avg);
+    for (const auto &stream : msg->streams) {
+      RCLCPP_INFO(this->get_logger(),
+                  "Topic: %s, Subscribers: %s, Rate: %.2f Hz, Avg Delay: %.2f ms",
+                  stream.topic_name.c_str(), stream.has_subscribers ? "true" : "false",
+                  stream.publish_rate_hz, stream.delay_ms_avg);
+    }
 
     RCLCPP_INFO(this->get_logger(), "Device Online: %s", msg->device_online ? "True" : "False");
     RCLCPP_INFO(this->get_logger(), "Connection Type: %s", msg->connection_type.c_str());

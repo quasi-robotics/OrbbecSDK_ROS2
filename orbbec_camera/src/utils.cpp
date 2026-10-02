@@ -23,6 +23,7 @@
 #include <regex>
 #include <sstream>
 #include <vector>
+#include <magic_enum/magic_enum.hpp>
 #include "orbbec_camera/utils.h"
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include "orbbec_camera/constants.h"
@@ -94,15 +95,14 @@ sensor_msgs::msg::CameraInfo convertToCameraInfo(OBCameraIntrinsic intrinsic,
   info.distortion_model = getDistortionModels(distortion);
   info.width = intrinsic.width;
   info.height = intrinsic.height;
-  info.d.resize(8, 0.0);
-  info.d[0] = distortion.k1;
-  info.d[1] = distortion.k2;
-  info.d[2] = distortion.p1;
-  info.d[3] = distortion.p2;
-  info.d[4] = distortion.k3;
-  info.d[5] = distortion.k4;
-  info.d[6] = distortion.k5;
-  info.d[7] = distortion.k6;
+  if (info.distortion_model == sensor_msgs::distortion_models::RATIONAL_POLYNOMIAL) {
+    info.d = {distortion.k1, distortion.k2, distortion.p1, distortion.p2,
+              distortion.k3, distortion.k4, distortion.k5, distortion.k6};
+  } else if (info.distortion_model == sensor_msgs::distortion_models::EQUIDISTANT) {
+    info.d = {distortion.k1, distortion.k2, distortion.k3, distortion.k4};
+  } else {
+    info.d = {distortion.k1, distortion.k2, distortion.p1, distortion.p2, distortion.k3};
+  }
   bool all_zero = std::all_of(info.d.begin(), info.d.end(), [](double val) { return val == 0.0; });
   info.roi.do_rectify = all_zero;
 
@@ -566,6 +566,29 @@ rmw_qos_profile_t getRMWQosProfileFromString(const std::string &str_qos) {
   }
 }
 
+std::string getRMWQosProfileDescription(const rmw_qos_profile_t &qos_profile) {
+  const auto short_qos_name = [](auto policy) {
+    auto name = magic_enum::enum_name(policy);
+    constexpr size_t prefix_size = sizeof("RMW_QOS_POLICY_") - 1;
+    if (name.size() <= prefix_size) {
+      return name;
+    }
+    name.remove_prefix(prefix_size);
+    const auto separator = name.find('_');
+    if (separator < name.size()) {
+      name.remove_prefix(separator + 1);
+    }
+    return name;
+  };
+
+  std::string history(short_qos_name(qos_profile.history));
+  if (qos_profile.history == RMW_QOS_POLICY_HISTORY_KEEP_LAST) {
+    history += "(" + std::to_string(qos_profile.depth) + ")";
+  }
+  return std::string(short_qos_name(qos_profile.reliability)) + "/" +
+         std::string(short_qos_name(qos_profile.durability)) + "/" + history;
+}
+
 bool isOpenNIDevice(int pid) {
   static const std::vector<int> OPENNI_DEVICE_PIDS = {
       0x0300, 0x0301, 0x0400, 0x0401, 0x0402, 0x0403, 0x0404, 0x0407, 0x0601, 0x060b, 0x060e,
@@ -655,6 +678,8 @@ OBMultiDeviceSyncMode OBSyncModeFromString(const std::string &mode) {
     return OBMultiDeviceSyncMode::OB_MULTI_DEVICE_SYNC_MODE_SOFTWARE_TRIGGERING;
   } else if (mode == "HARDWARE_TRIGGERING") {
     return OBMultiDeviceSyncMode::OB_MULTI_DEVICE_SYNC_MODE_HARDWARE_TRIGGERING;
+  } else if (mode == "GROUP_ACTIONS") {
+    return OBMultiDeviceSyncMode::OB_MULTI_DEVICE_SYNC_MODE_GROUP_ACTIONS;
   } else {
     return OBMultiDeviceSyncMode::OB_MULTI_DEVICE_SYNC_MODE_FREE_RUN;
   }
@@ -718,17 +743,17 @@ OB_SAMPLE_RATE sampleRateFromString(std::string &sample_rate) {
     return OB_SAMPLE_RATE_200_HZ;
   } else if (sample_rate == "500hz") {
     return OB_SAMPLE_RATE_500_HZ;
-  } else if (sample_rate == "1khz") {
+  } else if (sample_rate == "1khz" || sample_rate == "1000hz") {
     return OB_SAMPLE_RATE_1_KHZ;
-  } else if (sample_rate == "2khz") {
+  } else if (sample_rate == "2khz" || sample_rate == "2000hz") {
     return OB_SAMPLE_RATE_2_KHZ;
-  } else if (sample_rate == "4khz") {
+  } else if (sample_rate == "4khz" || sample_rate == "4000hz") {
     return OB_SAMPLE_RATE_4_KHZ;
-  } else if (sample_rate == "8khz") {
+  } else if (sample_rate == "8khz" || sample_rate == "8000hz") {
     return OB_SAMPLE_RATE_8_KHZ;
-  } else if (sample_rate == "16khz") {
+  } else if (sample_rate == "16khz" || sample_rate == "16000hz") {
     return OB_SAMPLE_RATE_16_KHZ;
-  } else if (sample_rate == "32khz") {
+  } else if (sample_rate == "32khz" || sample_rate == "32000hz") {
     return OB_SAMPLE_RATE_32_KHZ;
   } else {
     RCLCPP_ERROR_STREAM(rclcpp::get_logger("utils"), "Unknown OB_SAMPLE_RATE: " << sample_rate);
@@ -921,17 +946,28 @@ std::string parseUsbPort(const std::string &line) {
 }
 
 bool isValidJPEG(const std::shared_ptr<ob::ColorFrame> &frame) {
-  if (frame->getDataSize() < 2) {  // Checking both start and end markers, so minimal size is 4
+  if (!frame) {
     return false;
   }
 
+  const auto data_size = frame->getDataSize();
   const auto *data = static_cast<const uint8_t *>(frame->getData());
+  if (data == nullptr || data_size < 4) {
+    return false;
+  }
 
   // Check for JPEG start marker
   if (data[0] != 0xFF || data[1] != 0xD8) {
     return false;
   }
-  return true;
+
+  auto jpeg_size = data_size;
+  while (jpeg_size > 2 && data[jpeg_size - 1] == 0x00) {
+    --jpeg_size;
+  }
+
+  // Check for JPEG end marker after trimming zero padding.
+  return jpeg_size >= 4 && data[jpeg_size - 2] == 0xFF && data[jpeg_size - 1] == 0xD9;
 }
 
 std::string metaDataTypeToString(const OBFrameMetadataType &meta_data_type) {
@@ -1150,7 +1186,7 @@ std::string getDistortionModels(OBCameraDistortion distortion) {
     case OB_DISTORTION_BROWN_CONRADY:
       return sensor_msgs::distortion_models::PLUMB_BOB;
     case OB_DISTORTION_BROWN_CONRADY_K6:
-      return sensor_msgs::distortion_models::PLUMB_BOB;
+      return sensor_msgs::distortion_models::RATIONAL_POLYNOMIAL;
     case OB_DISTORTION_KANNALA_BRANDT4:
       return sensor_msgs::distortion_models::EQUIDISTANT;
     default:

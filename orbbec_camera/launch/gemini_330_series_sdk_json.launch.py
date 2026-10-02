@@ -41,7 +41,8 @@ def load_parameters(context, args):
     config_file_path = LaunchConfiguration('config_file_path').perform(context)
     if config_file_path:
         default_params = merge_params(default_params, load_yaml(config_file_path))
-    skip_convert = {'config_file_path', 'usb_port', 'serial_number', 'bag_record_filename', 'bag_filename'}
+    skip_convert = {'config_file_path', 'usb_port', 'serial_number', 'bag_record_filename', 'bag_filename',
+                    'depth_colorizer_mode'}
 
     result = {}
     for key, value in default_params.items():
@@ -76,22 +77,38 @@ def generate_launch_description():
         DeclareLaunchArgument('bag_filename', default_value=''),
         DeclareLaunchArgument('bag_loop', default_value='false'),
         DeclareLaunchArgument('connection_delay', default_value='10'),
-        DeclareLaunchArgument('upgrade_firmware', default_value=''),
-        DeclareLaunchArgument('preset_firmware_path', default_value=''),
         DeclareLaunchArgument('uvc_backend', default_value='libuvc'),
         DeclareLaunchArgument('load_config_json_file_path', default_value=''),
         DeclareLaunchArgument('export_config_json_file_path', default_value=''),
 
+        DeclareLaunchArgument('color_frame_queue_max_frames', default_value='1'),
+
         DeclareLaunchArgument('color_qos', default_value='default'),
+
+        DeclareLaunchArgument('color_qos_history', default_value='default'),
+
+        DeclareLaunchArgument('color_qos_depth', default_value='-1'),
         DeclareLaunchArgument('color_camera_info_qos', default_value='default'),
 
         DeclareLaunchArgument('depth_qos', default_value='default'),
+
+        DeclareLaunchArgument('depth_qos_history', default_value='default'),
+
+        DeclareLaunchArgument('depth_qos_depth', default_value='-1'),
         DeclareLaunchArgument('depth_camera_info_qos', default_value='default'),
 
         DeclareLaunchArgument('left_ir_qos', default_value='default'),
+
+        DeclareLaunchArgument('left_ir_qos_history', default_value='default'),
+
+        DeclareLaunchArgument('left_ir_qos_depth', default_value='-1'),
         DeclareLaunchArgument('left_ir_camera_info_qos', default_value='default'),
 
         DeclareLaunchArgument('right_ir_qos', default_value='default'),
+
+        DeclareLaunchArgument('right_ir_qos_history', default_value='default'),
+
+        DeclareLaunchArgument('right_ir_qos_depth', default_value='-1'),
         DeclareLaunchArgument('right_ir_camera_info_qos', default_value='default'),
 
         DeclareLaunchArgument('enable_sync_output_accel_gyro', default_value='false'),
@@ -113,6 +130,7 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_frame_drop_log', default_value='false'),
         DeclareLaunchArgument('frame_timestamp_csv_file', default_value=''),
         DeclareLaunchArgument('enable_d2c_viewer', default_value='false'),
+        DeclareLaunchArgument('depth_colorizer_mode', default_value='none'),
         DeclareLaunchArgument('show_fps_enable', default_value='false'),
 
         DeclareLaunchArgument('enumerate_net_device', default_value='true'),
@@ -122,6 +140,7 @@ def generate_launch_description():
         DeclareLaunchArgument('log_level', default_value='info'),
         DeclareLaunchArgument('log_file_name', default_value=''),
         DeclareLaunchArgument('config_file_path', default_value=''),
+        DeclareLaunchArgument('monitor_poll_interval_sec', default_value='-1'),
 
         DeclareLaunchArgument('force_ip_enable', default_value='false'),
         DeclareLaunchArgument('force_ip_mac', default_value=''),

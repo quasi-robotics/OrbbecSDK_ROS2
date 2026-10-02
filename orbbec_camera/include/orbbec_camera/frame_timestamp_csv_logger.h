@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -20,8 +21,10 @@ namespace orbbec_camera {
 
 class FrameTimestampCsvLogger {
  public:
+  enum class OutputMode { SYNCED, COLOR, LEFT_COLOR, RIGHT_COLOR, DEPTH, LEFT_IR, RIGHT_IR };
+
   FrameTimestampCsvLogger(bool drop_log_enabled, const std::string &csv_file_path,
-                          rclcpp::Logger logger);
+                          OutputMode output_mode, rclcpp::Logger logger);
 
   ~FrameTimestampCsvLogger() noexcept;
 
@@ -136,21 +139,26 @@ class FrameTimestampCsvLogger {
   std::string serializeStreamColumns(const StreamState &state) const;
   static std::string formatSecondsColumn(int64_t time_us);
   static std::string formatOptionalIntColumn(const std::optional<int64_t> &value);
-  static std::string csvHeader();
+  std::string csvHeader() const;
 
   void writerThreadMain();
-  void openCsvIfNeeded();
+  std::string csvFilePathForIndex(uint64_t file_index) const;
+  bool openCsvFile(uint64_t file_index);
+  bool rotateCsvFile();
 
   rclcpp::Logger logger_;
   bool enabled_ = false;
   bool csv_enabled_ = false;
   bool drop_log_enabled_ = false;
   std::atomic_bool shutdown_requested_{false};
-  bool csv_writer_failed_ = false;
+  std::atomic_bool csv_writer_failed_{false};
   bool queue_warning_active_ = false;
   std::string csv_file_path_;
+  OutputMode output_mode_;
   std::ofstream csv_stream_;
   std::thread writer_thread_;
+  uint64_t csv_file_index_ = 0;
+  uint64_t csv_rows_written_ = 0;
 
   uint64_t next_row_id_ = 1;
   std::unordered_map<uint64_t, PendingRow> pending_rows_;

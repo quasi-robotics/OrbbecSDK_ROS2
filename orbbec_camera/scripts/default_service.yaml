@@ -192,7 +192,7 @@ services:
   - name: /camera/read_customer_data
     type: orbbec_camera_msgs/srv/GetString
 
-  - name: /camera/set_floor_enable
+  - name: /camera/set_flood_enable
     type: std_srvs/srv/SetBool
     request: {data: false}
   - name: /camera/set_fan_work_mode

@@ -15,25 +15,33 @@ using namespace orbbec_camera;
 namespace {
 
 constexpr int kFirmwareLogDrainDelaySec = 5;
+constexpr char kDocumentationUrl[] =
+    "https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/6_benchmark/"
+    "device_query_tools.html";
 
 struct CliArgs {
   bool help = false;
   std::string serial_number;
+  std::string device_preset;
   std::string sdk_log_level = "off";
 };
 
 void printUsage() {
   std::cout << "Usage:\n"
             << "ros2 run orbbec_camera list_camera_profile_mode_node --\\\n"
-            << "      [--serial_number SN]\n\n"
+            << "      [--serial_number SN] [--device_preset PRESET]\n\n"
             << "Parameters:\n"
             << "  --serial_number SN  Select a specific camera by serial number.\n"
+            << "  --device_preset PRESET\n"
+            << "                      Load a device preset before listing profiles.\n"
             << "  --sdk_log_level LEVEL\n"
             << "                      SDK file log level: debug/info/warn/error/fatal/off "
                "(default: off).\n"
             << "  -h, --help          Show this help message.\n"
             << "Examples:\n"
-            << "  ros2 run orbbec_camera list_camera_profile_mode_node -- --sdk_log_level debug\n";
+            << "  ros2 run orbbec_camera list_camera_profile_mode_node -- --sdk_log_level debug\n\n"
+            << "Documentation:\n"
+            << "  " << kDocumentationUrl << "\n";
 }
 
 bool parseArgs(int argc, char** argv, CliArgs& args, std::string& error) {
@@ -59,6 +67,28 @@ bool parseArgs(int argc, char** argv, CliArgs& args, std::string& error) {
         return false;
       }
       args.serial_number = argv[i];
+      continue;
+    }
+
+    if (current.rfind("--device_preset=", 0) == 0) {
+      args.device_preset = current.substr(std::strlen("--device_preset="));
+      if (args.device_preset.empty()) {
+        error = "--device_preset requires a value";
+        return false;
+      }
+      continue;
+    }
+
+    if (current == "--device_preset") {
+      if (++i >= argc) {
+        error = "--device_preset requires a value";
+        return false;
+      }
+      args.device_preset = argv[i];
+      if (args.device_preset.empty()) {
+        error = "--device_preset requires a value";
+        return false;
+      }
       continue;
     }
 
@@ -116,7 +146,8 @@ std::shared_ptr<ob::Device> initializeDevice(const std::string& serial_number) {
   auto context = std::make_shared<ob::Context>();
   auto device_list = context->queryDeviceList();
   if (!device_list || device_list->getCount() == 0) {
-    std::cout << "No device found" << std::endl;
+    std::cout << "No device found\nFor usage and troubleshooting, see: " << kDocumentationUrl
+              << std::endl;
     return nullptr;
   }
 
@@ -139,8 +170,8 @@ void listSensorProfiles(const std::shared_ptr<ob::Device>& device) {
       auto origin_profile = profile_list->getProfile(j);
       if ((sensor->getType() == OB_SENSOR_DEPTH || sensor->getType() == OB_SENSOR_IR_LEFT ||
            sensor->getType() == OB_SENSOR_IR_RIGHT) &&
-          isGemini305SeriesPID(pid)) {
-        // Gemini 305 series
+          isGemini301SeriesPID(pid)) {
+        // Gemini 301 series
         auto profile = origin_profile->as<ob::VideoStreamProfile>();
         std::cout << magic_enum::enum_name(sensor->getType()) << " profile: " << profile->getWidth()
                   << "x" << profile->getHeight() << " " << profile->getFps() << "fps "
@@ -148,8 +179,11 @@ void listSensorProfiles(const std::shared_ptr<ob::Device>& device) {
                   << " | width: " << profile->getDecimationConfig().originWidth
                   << " height: " << profile->getDecimationConfig().originHeight
                   << " downscale:" << profile->getDecimationConfig().factor << std::endl;
-      } else if (sensor->getType() == OB_SENSOR_COLOR || sensor->getType() == OB_SENSOR_DEPTH ||
-                 sensor->getType() == OB_SENSOR_IR || sensor->getType() == OB_SENSOR_IR_LEFT ||
+      } else if (sensor->getType() == OB_SENSOR_COLOR ||
+                 sensor->getType() == OB_SENSOR_COLOR_LEFT ||
+                 sensor->getType() == OB_SENSOR_COLOR_RIGHT ||
+                 sensor->getType() == OB_SENSOR_DEPTH || sensor->getType() == OB_SENSOR_IR ||
+                 sensor->getType() == OB_SENSOR_IR_LEFT ||
                  sensor->getType() == OB_SENSOR_IR_RIGHT) {
         auto profile = origin_profile->as<ob::VideoStreamProfile>();
         std::cout << magic_enum::enum_name(sensor->getType()) << " profile: " << profile->getWidth()
@@ -199,8 +233,33 @@ void printPreset(const std::shared_ptr<ob::Device>& device) {
   std::cout << "Preset list:" << std::endl;
   for (uint32_t i = 0; i < preset_list->getCount(); i++) {
     auto name = preset_list->getName(i);
-    std::cout << "Preset list[" << i << "]: " << name << std::endl;
+    std::string version;
+    try {
+      const char* version_value = preset_list->getDepthWorkModeVersion(i);
+      version = version_value == nullptr ? "" : version_value;
+    } catch (...) {
+      // Older firmware can enumerate presets without exposing version information.
+    }
+    std::cout << "Preset list[" << i << "]: " << name
+              << (version.empty() ? "" : " (" + version + ")") << std::endl;
   }
+}
+
+bool loadDevicePreset(const std::shared_ptr<ob::Device>& device, const std::string& device_preset) {
+  if (device_preset.empty()) {
+    return true;
+  }
+
+  try {
+    device->loadPreset(device_preset.c_str());
+    std::cout << "Loaded device preset: " << device_preset << std::endl;
+    return true;
+  } catch (const ob::Error& e) {
+    std::cerr << "Failed to load device preset: " << formatObErrorWithStatus(e) << std::endl;
+  } catch (const std::exception& e) {
+    std::cerr << "Failed to load device preset: " << e.what() << std::endl;
+  }
+  return false;
 }
 
 int main(int argc, char** argv) {
@@ -229,6 +288,9 @@ int main(int argc, char** argv) {
   bool firmware_log_enabled = false;
   if (isSdkLogEnabled(args.sdk_log_level)) {
     firmware_log_enabled = enableFirmwareLog(device);
+  }
+  if (!loadDevicePreset(device, args.device_preset)) {
+    return -1;
   }
   listSensorProfiles(device);
   printDeviceProperties(device);

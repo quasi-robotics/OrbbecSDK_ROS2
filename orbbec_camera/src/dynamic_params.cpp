@@ -21,21 +21,23 @@ Parameters::Parameters(rclcpp::Node *node)
     : node_(node), logger_(node_->get_logger()), params_backend_(node) {
   params_backend_.addOnSetParametersCallback(
       [this](const std::vector<rclcpp::Parameter> &parameters) {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
         for (const auto &parameter : parameters) {
-          if (param_functions_.find(parameter.get_name()) != param_functions_.end()) {
-            auto functions = param_functions_[parameter.get_name()];
-            if (functions.empty()) {
-              RCLCPP_WARN_STREAM(logger_, "Parameter " << parameter.get_name()
-                                                       << " can not be changed in runtime.");
-            } else {
-              for (const auto &func : param_functions_[parameter.get_name()]) {
-                func(parameter);
-              }
+          const auto function_it = param_functions_.find(parameter.get_name());
+          if (function_it == param_functions_.end()) {
+            continue;
+          }
+          if (function_it->second.empty()) {
+            result.successful = false;
+            result.reason = "Parameter " + parameter.get_name() + " can not be changed in runtime.";
+            RCLCPP_WARN_STREAM(logger_, result.reason);
+          } else {
+            for (const auto &func : function_it->second) {
+              func(parameter);
             }
           }
         }
-        rcl_interfaces::msg::SetParametersResult result;
-        result.successful = true;
         return result;
       });
 }

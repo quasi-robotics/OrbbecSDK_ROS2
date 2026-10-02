@@ -20,6 +20,7 @@ debian/
 
 # Compiled Dynamic libraries
 *.so
+!orbbec_camera/SDK/**/*.so
 *.dylib
 *.dll
 

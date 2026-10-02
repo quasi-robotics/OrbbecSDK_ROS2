@@ -67,11 +67,6 @@ def generate_launch_description():
             description='Number of devices to start. Required when launching multiple devices.'
         ),
         DeclareLaunchArgument(
-            'upgrade_firmware',
-            default_value='',
-            description='Firmware file path. If set, attempts firmware upgrade on startup; empty means no upgrade.'
-        ),
-        DeclareLaunchArgument(
             'connection_delay',
             default_value='10',
             description='Reopen delay after hot-plug (milliseconds). Prevents firmware issues caused by immediate reconnect.'

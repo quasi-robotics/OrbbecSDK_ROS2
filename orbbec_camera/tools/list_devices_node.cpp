@@ -29,6 +29,9 @@
 
 namespace {
 constexpr int kFirmwareLogDrainDelaySec = 5;
+constexpr char kDocumentationUrl[] =
+    "https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/6_benchmark/"
+    "device_query_tools.html";
 
 struct CliArgs {
   bool help = false;
@@ -42,7 +45,9 @@ void printUsage() {
             << "  --sdk_log_level LEVEL  SDK file log level: debug/info/warn/error/fatal/off "
                "(default: off).\n\n"
             << "Examples:\n"
-            << "  ros2 run orbbec_camera list_devices_node -- --sdk_log_level debug\n";
+            << "  ros2 run orbbec_camera list_devices_node -- --sdk_log_level debug\n\n"
+            << "Documentation:\n"
+            << "  " << kDocumentationUrl << "\n";
 }
 
 bool parseArgs(int argc, char **argv, CliArgs &args, std::string &error) {
@@ -176,7 +181,15 @@ void printPresetInfo(const std::shared_ptr<ob::Device> &device) {
     for (uint32_t i = 0; i < preset_count; ++i) {
       const char *preset_name = preset_list->getName(i);
       if (preset_name != nullptr && preset_name[0] != '\0') {
-        RCLCPP_INFO_STREAM(logger, "  - " << preset_name);
+        std::string version;
+        try {
+          const char *version_value = preset_list->getDepthWorkModeVersion(i);
+          version = version_value == nullptr ? "" : version_value;
+        } catch (...) {
+          // Older firmware can enumerate presets without exposing version information.
+        }
+        RCLCPP_INFO_STREAM(logger,
+                           "  - " << preset_name << (version.empty() ? "" : " (" + version + ")"));
       }
     }
 
@@ -190,14 +203,6 @@ void printPresetInfo(const std::shared_ptr<ob::Device> &device) {
           RCLCPP_INFO_STREAM(logger, "  - " << preset_name);
         }
       }
-    }
-
-    std::string key = "PresetVer";
-    if (device->isExtensionInfoExist(key)) {
-      std::string value = device->getExtensionInfo(key);
-      RCLCPP_INFO_STREAM(logger, "preset version: " << value);
-    } else {
-      RCLCPP_INFO_STREAM(logger, "preset version: not available");
     }
   } catch (ob::Error &e) {
     RCLCPP_WARN_STREAM(logger,
@@ -339,10 +344,16 @@ int main(int argc, char **argv) {
   } catch (ob::Error &e) {
     RCLCPP_ERROR_STREAM(rclcpp::get_logger("list_device_node"),
                         orbbec_camera::formatObErrorWithStatus(e));
+    RCLCPP_ERROR_STREAM(rclcpp::get_logger("list_device_node"),
+                        "For usage and troubleshooting, see: " << kDocumentationUrl);
   } catch (const std::exception &e) {
     RCLCPP_ERROR_STREAM(rclcpp::get_logger("list_device_node"), e.what());
+    RCLCPP_ERROR_STREAM(rclcpp::get_logger("list_device_node"),
+                        "For usage and troubleshooting, see: " << kDocumentationUrl);
   } catch (...) {
     RCLCPP_ERROR_STREAM(rclcpp::get_logger("list_device_node"), "unknown error");
+    RCLCPP_ERROR_STREAM(rclcpp::get_logger("list_device_node"),
+                        "For usage and troubleshooting, see: " << kDocumentationUrl);
   }
   return 0;
 }

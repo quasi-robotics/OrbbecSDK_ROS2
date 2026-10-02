@@ -87,12 +87,6 @@ class OBCameraNodeDriver : public rclcpp::Node {
   void setBagRecordingCallback(
       const std::shared_ptr<orbbec_camera_msgs::srv::SetBagRecording::Request> request,
       std::shared_ptr<orbbec_camera_msgs::srv::SetBagRecording::Response> response);
-  void presetUpdateCallback(bool firstCall, OBFwUpdateState state, const char* message,
-                            uint8_t percent);
-  void updatePresetFirmware(std::string path);
-
-  void firmwareUpdateCallback(OBFwUpdateState state, const char* message, uint8_t percent);
-
   bool applyForceIpConfig();
 
   OBDeviceAccessMode stringToAccessMode(const std::string& mode_str);
@@ -114,6 +108,7 @@ class OBCameraNodeDriver : public rclcpp::Node {
   std::atomic_bool is_alive_{false};
   std::atomic_bool device_connected_{false};
   std::atomic_bool device_connecting_{false};
+  std::atomic_bool stream_configuration_error_{false};
   std::string serial_number_;
   std::string device_unique_id_;
   std::string usb_port_;
@@ -144,20 +139,14 @@ class OBCameraNodeDriver : public rclcpp::Node {
   bool enable_sync_host_time_ = true;
   std::chrono::milliseconds time_sync_period_{6000};
   std::string timestamp_clock_type_str_;
-  std::string preset_firmware_path_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reboot_device_srv_ = nullptr;
   rclcpp::Service<orbbec_camera_msgs::srv::SetBagRecording>::SharedPtr set_bag_recording_srv_ =
       nullptr;
   std::chrono::time_point<std::chrono::system_clock> start_time_;
   std::string extension_path_;
   static backward::SignalHandling sh;  // for stack trace
-  std::string upgrade_firmware_;
-  std::atomic<bool> firmware_update_success_{false};
-  std::atomic<bool> need_reupdate_{false};
-  std::atomic<bool> is_reupdating_{false};  // Flag to track if we're in reupdate process
   std::atomic<bool> delay_stream_start_after_reconnect_{false};
   rclcpp::TimerBase::SharedPtr device_status_timer_ = nullptr;
-  int device_status_interval_hz = 2;  // 2Hz
   rclcpp::Publisher<orbbec_camera_msgs::msg::DeviceStatus>::SharedPtr device_status_pub_ = nullptr;
   std::string node_name_;
   bool force_ip_enable_{false};

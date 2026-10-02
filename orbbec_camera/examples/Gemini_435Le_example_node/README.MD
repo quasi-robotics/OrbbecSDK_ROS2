@@ -91,7 +91,7 @@ The master switch for camera streams allows enabling or disabling all streams du
 - **Get streams status**
 
   ```bash
-  ros2 service call /camera/get_streams_enable std_srvs/srv/GetBool '{}'
+  ros2 service call /camera/get_streams_enable orbbec_camera_msgs/srv/GetBool '{}'
   ```
 
 ### 2.3 Device Info
@@ -148,11 +148,11 @@ A new parameter **time_sync_period** is introduced to configure the time synchro
 
 ---
 
-### 3.3 Added `camera_info_url` and `ir_info_url`
+### 3.3 Added `color_info_url` and `ir_info_url`
 
 Support specifying calibration file paths through parameters to load external camera intrinsic and extrinsic configurations:
 
-* **camera\_info\_url**: Path to the color camera calibration file
+* **color\_info\_url**: Path to the color camera calibration file
 * **ir\_info\_url**: Path to the IR camera calibration file
 
 > Note: This method does not write the file information to the device.
@@ -162,8 +162,8 @@ Support specifying calibration file paths through parameters to load external ca
 Specify the path in the launch file or when launching:
 
 ```launch
-DeclareLaunchArgument('ir_info_url', default_value='file:///home/user/calibration/color.yaml'),
-DeclareLaunchArgument('color_info_url', default_value='file:///home/user/calibration/ir.yaml'),
+DeclareLaunchArgument('ir_info_url', default_value='file:///home/user/calibration/ir.yaml'),
+DeclareLaunchArgument('color_info_url', default_value='file:///home/user/calibration/color.yaml'),
 ```
 
 #### Calibration File Example (YAML Format)

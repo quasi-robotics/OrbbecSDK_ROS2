@@ -23,6 +23,23 @@ from statistics import mean
 from tabulate import tabulate
 import importlib
 import csv
+import sys
+
+
+DOCUMENTATION_URL = (
+    "https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/"
+    "6_benchmark/benchmark_tools.html"
+)
+
+
+class DocumentationArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(
+            2,
+            f"{self.prog}: error: {message}\n"
+            f"For usage and troubleshooting, see: {DOCUMENTATION_URL}\n",
+        )
 
 
 class ServiceBenchmark:
@@ -180,7 +197,10 @@ class BenchmarkRunner:
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = DocumentationArgumentParser(
+        epilog=f"Documentation: {DOCUMENTATION_URL}",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--service", help="Service name")
     parser.add_argument("--count", type=int, default=10, help="Number of calls")
     parser.add_argument("--yaml_file", help="YAML config file for batch testing")
@@ -207,4 +227,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        print(f"For usage and troubleshooting, see: {DOCUMENTATION_URL}", file=sys.stderr)
+        raise

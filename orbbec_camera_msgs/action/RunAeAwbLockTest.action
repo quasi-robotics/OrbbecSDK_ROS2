@@ -1,0 +1,24 @@
+# Timeout budget for the main workflow. Recovery after failure uses a separate timeout.
+# A value of zero uses the 10-second default.
+uint32 timeout_ms
+---
+bool success
+string message
+
+int32 captured_exposure
+int32 captured_color_gain
+uint16 captured_awb_r_gain
+uint16 captured_awb_b_gain
+uint16 captured_awb_g_gain
+int32 captured_color_temperature
+
+int32 actual_exposure
+int32 actual_color_gain
+uint16 actual_awb_r_gain
+uint16 actual_awb_b_gain
+uint16 actual_awb_g_gain
+int32 actual_color_temperature
+---
+string phase
+# Raw SDK status read for this phase.
+int32 ae_awb_status

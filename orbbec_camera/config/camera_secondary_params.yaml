@@ -1,10 +1,12 @@
 # common params
 depth_registration: false
 enable_d2c_viewer: false
+depth_colorizer_mode: "none"
 enable_point_cloud: false
 enable_colored_point_cloud: false
 enable_ldp: false
 device_preset: "Default"
+device_preset_version: ""
 enable_laser: true
 
 # enable_laser: true
@@ -61,5 +63,3 @@ right_ir_format: "ANY"
 # ir_height: 0
 # ir_fps: 0
 # ir_format: "ANY"
-
-

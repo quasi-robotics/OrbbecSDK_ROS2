@@ -29,6 +29,7 @@ def generate_launch_description():
         DeclareLaunchArgument('point_cloud_qos', default_value='default'),
         DeclareLaunchArgument('connection_delay', default_value='100'),
         DeclareLaunchArgument('diagnostic_period', default_value='0.0'),
+        DeclareLaunchArgument('color_frame_queue_max_frames', default_value='1'),
         DeclareLaunchArgument('color_width', default_value='640'),
         DeclareLaunchArgument('color_height', default_value='480'),
         DeclareLaunchArgument('color_fps', default_value='25'),
@@ -38,6 +39,8 @@ def generate_launch_description():
         DeclareLaunchArgument('color_mirror', default_value='false'),
         DeclareLaunchArgument('color_rotation', default_value='-1'),
         DeclareLaunchArgument('color_qos', default_value='default'),
+        DeclareLaunchArgument('color_qos_history', default_value='default'),
+        DeclareLaunchArgument('color_qos_depth', default_value='-1'),
         DeclareLaunchArgument('color_camera_info_qos', default_value='default'),
         DeclareLaunchArgument('enable_color_auto_exposure_priority', default_value='false'),
         DeclareLaunchArgument('enable_color_auto_exposure', default_value='true'),
@@ -63,6 +66,8 @@ def generate_launch_description():
         DeclareLaunchArgument('depth_exposure', default_value='-1'),
         DeclareLaunchArgument('depth_gain', default_value='-1'),
         DeclareLaunchArgument('depth_qos', default_value='default'),
+        DeclareLaunchArgument('depth_qos_history', default_value='default'),
+        DeclareLaunchArgument('depth_qos_depth', default_value='-1'),
         DeclareLaunchArgument('depth_camera_info_qos', default_value='default'),
         # /config/depthfilter/Openni_device.json，need config path.
         DeclareLaunchArgument('depth_filter_config', default_value=''),
@@ -73,6 +78,8 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_ir', default_value='true'),
         DeclareLaunchArgument('ir_flip', default_value='false'),
         DeclareLaunchArgument('ir_qos', default_value='default'),
+        DeclareLaunchArgument('ir_qos_history', default_value='default'),
+        DeclareLaunchArgument('ir_qos_depth', default_value='-1'),
         DeclareLaunchArgument('ir_camera_info_qos', default_value='default'),
         DeclareLaunchArgument('enable_ir_auto_exposure', default_value='true'),
         DeclareLaunchArgument('ir_exposure', default_value='-1'),
@@ -86,6 +93,7 @@ def generate_launch_description():
         DeclareLaunchArgument('log_file_name', default_value=''),
         DeclareLaunchArgument('enable_publish_extrinsic', default_value='false'),
         DeclareLaunchArgument('enable_d2c_viewer', default_value='false'),
+        DeclareLaunchArgument('depth_colorizer_mode', default_value='none'),
         DeclareLaunchArgument('enable_noise_removal_filter', default_value='true'),
         DeclareLaunchArgument('noise_removal_filter_min_diff', default_value='256'),
         DeclareLaunchArgument('noise_removal_filter_max_size', default_value='80'),
@@ -125,6 +133,7 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_ldp', default_value='true'),
         DeclareLaunchArgument('enable_heartbeat', default_value='false'),
         DeclareLaunchArgument('enable_firmware_log', default_value='false'),
+        DeclareLaunchArgument('monitor_poll_interval_sec', default_value='-1'),
     ]
 
     # Node configuration

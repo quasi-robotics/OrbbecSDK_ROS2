@@ -112,6 +112,8 @@ std::string OBSyncModeToString(const OBMultiDeviceSyncMode& mode) {
       return "SOFTWARE_TRIGGERING";
     case OBMultiDeviceSyncMode::OB_MULTI_DEVICE_SYNC_MODE_HARDWARE_TRIGGERING:
       return "HARDWARE_TRIGGERING";
+    case OBMultiDeviceSyncMode::OB_MULTI_DEVICE_SYNC_MODE_GROUP_ACTIONS:
+      return "GROUP_ACTIONS";
     default:
       return "FREE_RUN";
   }
@@ -121,6 +123,11 @@ std::string OBSyncModeToString(const OBMultiDeviceSyncMode& mode) {
 
 void OBCameraNode::setupCameraCtrlServices() {
   using std_srvs::srv::SetBool;
+  get_color_queue_stats_srv_ = node_->create_service<SetBool>(
+      "get_color_queue_stats", [this](const std::shared_ptr<SetBool::Request> request,
+                                      std::shared_ptr<SetBool::Response> response) {
+        getColorQueueStatsCallback(request, response);
+      });
   for (auto stream_index : IMAGE_STREAMS) {
     if (!enable_stream_[stream_index]) {
       continue;
@@ -210,11 +217,11 @@ void OBCameraNode::setupCameraCtrlServices() {
         });
   }
   if (isPropertyWritable(device_, OB_PROP_FLOOD_BOOL)) {
-    set_floor_enable_srv_ = node_->create_service<SetBool>(
-        "set_floor_enable", [this](const std::shared_ptr<rmw_request_id_t> request_header,
+    set_flood_enable_srv_ = node_->create_service<SetBool>(
+        "set_flood_enable", [this](const std::shared_ptr<rmw_request_id_t> request_header,
                                    const std::shared_ptr<SetBool::Request> request,
                                    std::shared_ptr<SetBool::Response> response) {
-          setFloorEnableCallback(request_header, request, response);
+          setFloodEnableCallback(request_header, request, response);
         });
   }
   if (isPropertyWritable(device_, OB_PROP_LASER_CONTROL_INT) ||
@@ -288,6 +295,20 @@ void OBCameraNode::setupCameraCtrlServices() {
                                   std::shared_ptr<SetInt32::Response> response) {
         setWhiteBalanceCallback(request, response);
       });
+  if (isPropertyReadable(device_, OB_PROP_COLOR_WB_CTRL_INT)) {
+    get_color_wb_ctrl_srv_ = node_->create_service<GetInt32>(
+        "get_color_wb_ctrl", [this](const std::shared_ptr<GetInt32::Request> request,
+                                    std::shared_ptr<GetInt32::Response> response) {
+          getColorWbCtrlCallback(request, response);
+        });
+  }
+  if (isPropertyWritable(device_, OB_PROP_COLOR_WB_CTRL_INT)) {
+    set_color_wb_ctrl_srv_ = node_->create_service<SetInt32>(
+        "set_color_wb_ctrl", [this](const std::shared_ptr<SetInt32::Request> request,
+                                    std::shared_ptr<SetInt32::Response> response) {
+          setColorWbCtrlCallback(request, response);
+        });
+  }
   get_auto_white_balance_srv_ = node_->create_service<GetInt32>(
       "get_auto_white_balance", [this](const std::shared_ptr<GetInt32::Request> request,
                                        std::shared_ptr<GetInt32::Response> response) {
@@ -298,6 +319,27 @@ void OBCameraNode::setupCameraCtrlServices() {
                                        std::shared_ptr<SetBool::Response> response) {
         setAutoWhiteBalanceCallback(request, response);
       });
+  if (isPropertyReadable(device_, OB_PROP_COLOR_AE_AWB_STAT_INT)) {
+    get_ae_awb_status_srv_ = node_->create_service<GetInt32>(
+        "get_color_ae_awb_status", [this](const std::shared_ptr<GetInt32::Request> request,
+                                          std::shared_ptr<GetInt32::Response> response) {
+          getAeAwbStatusCallback(request, response);
+        });
+  }
+  if (isPropertyReadable(device_, OB_STRUCT_COLOR_AWB_GAIN)) {
+    get_awb_gain_srv_ = node_->create_service<GetAwbGain>(
+        "get_color_awb_gain", [this](const std::shared_ptr<GetAwbGain::Request> request,
+                                     std::shared_ptr<GetAwbGain::Response> response) {
+          getAwbGainCallback(request, response);
+        });
+  }
+  if (isPropertyWritable(device_, OB_STRUCT_COLOR_AWB_GAIN)) {
+    set_awb_gain_srv_ = node_->create_service<SetAwbGain>(
+        "set_color_awb_gain", [this](const std::shared_ptr<SetAwbGain::Request> request,
+                                     std::shared_ptr<SetAwbGain::Response> response) {
+          setAwbGainCallback(request, response);
+        });
+  }
   get_device_srv_ = node_->create_service<GetDeviceInfo>(
       "get_device_info", [this](const std::shared_ptr<GetDeviceInfo::Request> request,
                                 std::shared_ptr<GetDeviceInfo::Response> response) {
@@ -308,6 +350,28 @@ void OBCameraNode::setupCameraCtrlServices() {
                                   std::shared_ptr<GetDeviceConfig::Response> response) {
         getDeviceConfigCallback(request, response);
       });
+  if (isPropertyReadable(device_, OB_PROP_ACTION_SIGNAL_COUNT_INT) &&
+      isPropertyReadable(device_, OB_PROP_ACTION_DEVICE_KEY_INT) &&
+      isPropertyWritable(device_, OB_PROP_ACTION_SELECTOR_INT) &&
+      isPropertyReadable(device_, OB_PROP_ACTION_GROUP_KEY_INT) &&
+      isPropertyReadable(device_, OB_PROP_ACTION_GROUP_MASK_INT)) {
+    get_action_config_srv_ = node_->create_service<GetActionConfig>(
+        "get_action_config", [this](const std::shared_ptr<GetActionConfig::Request> request,
+                                    std::shared_ptr<GetActionConfig::Response> response) {
+          getActionConfigCallback(request, response);
+        });
+  }
+  if (isPropertyReadable(device_, OB_PROP_ACTION_SIGNAL_COUNT_INT) &&
+      isPropertyWritable(device_, OB_PROP_ACTION_DEVICE_KEY_INT) &&
+      isPropertyWritable(device_, OB_PROP_ACTION_SELECTOR_INT) &&
+      isPropertyWritable(device_, OB_PROP_ACTION_GROUP_KEY_INT) &&
+      isPropertyWritable(device_, OB_PROP_ACTION_GROUP_MASK_INT)) {
+    set_action_config_srv_ = node_->create_service<SetActionConfig>(
+        "set_action_config", [this](const std::shared_ptr<SetActionConfig::Request> request,
+                                    std::shared_ptr<SetActionConfig::Response> response) {
+          setActionConfigCallback(request, response);
+        });
+  }
   get_sdk_version_srv_ = node_->create_service<GetString>(
       "get_sdk_version",
       [this](const std::shared_ptr<GetString::Request> request,
@@ -455,6 +519,69 @@ void OBCameraNode::setupCameraCtrlServices() {
                                             std::shared_ptr<SetInt32::Response> response) {
           setSyncIoVoltageLevelCallback(request, response);
         });
+  }
+}
+
+void OBCameraNode::getColorQueueStatsCallback(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request>& request,
+    std::shared_ptr<std_srvs::srv::SetBool::Response>& response) {
+  try {
+    const auto to_json = [](const ColorQueueStatsSnapshot& stats) {
+      return nlohmann::json{
+          {"capacity_frames", stats.capacity_frames},
+          {"queue_size", stats.queue_size},
+          {"max_queue_size", stats.max_queue_size},
+          {"overflow_count", stats.overflow_count},
+          {"oldest_queue_wait_ms", stats.oldest_queue_wait_ms},
+          {"max_queue_wait_ms", stats.max_queue_wait_ms},
+      };
+    };
+
+    nlohmann::json queues = nlohmann::json::object();
+    uint64_t overflow_count = 0;
+    const bool reset = request->data;
+    if (enable_stream_[COLOR] || reset) {
+      const auto stats =
+          getColorQueueStats(color_frame_queue_, color_frame_queue_lock_, color_frame_queue_stats_,
+                             color_frame_queue_max_frames_, reset);
+      if (enable_stream_[COLOR]) {
+        queues["color"] = to_json(stats);
+        overflow_count += stats.overflow_count;
+      }
+    }
+    if (enable_stream_[COLOR_LEFT] || reset) {
+      const auto stats = getColorQueueStats(left_color_frame_queue_, left_color_frame_queue_lock_,
+                                            left_color_frame_queue_stats_,
+                                            left_color_frame_queue_max_frames_, reset);
+      if (enable_stream_[COLOR_LEFT]) {
+        queues["left_color"] = to_json(stats);
+        overflow_count += stats.overflow_count;
+      }
+    }
+    if (enable_stream_[COLOR_RIGHT] || reset) {
+      const auto stats = getColorQueueStats(right_color_frame_queue_, right_color_frame_queue_lock_,
+                                            right_color_frame_queue_stats_,
+                                            right_color_frame_queue_max_frames_, reset);
+      if (enable_stream_[COLOR_RIGHT]) {
+        queues["right_color"] = to_json(stats);
+        overflow_count += stats.overflow_count;
+      }
+    }
+    response->success = true;
+    response->message =
+        nlohmann::json{
+            {"namespace", node_->get_namespace()},
+            {"overflow_count", overflow_count},
+            {"statistics_reset", reset},
+            {"queues", queues},
+        }
+            .dump();
+    if (queues.empty()) {
+      RCLCPP_WARN(logger_, "No enabled color streams; color queue statistics are empty");
+    }
+  } catch (const std::exception& error) {
+    response->success = false;
+    response->message = error.what();
   }
 }
 
@@ -776,6 +903,8 @@ void OBCameraNode::setImageRegistrationModeCallback(
 
   auto rollback_after_error = [&](const std::string& error_message) {
     try {
+      stopColorFrameThreads();
+      clearColorFrameQueues();
       restore_old_mode();
       if (was_running && !pipeline_started_.load()) {
         startStreams();
@@ -797,6 +926,8 @@ void OBCameraNode::setImageRegistrationModeCallback(
     if (was_running) {
       stopStreams();
     }
+    stopColorFrameThreads();
+    clearColorFrameQueues();
 
     apply_image_registration_mode(mode);
 
@@ -997,13 +1128,13 @@ void OBCameraNode::setAeRoiCallback(const std::shared_ptr<SetArrays ::Request>& 
                                     std::shared_ptr<SetArrays::Response>& response,
                                     const stream_index_pair& stream_index) {
   auto stream = stream_index.first;
-  if (isGemini305SeriesPID(device_->getDeviceInfo()->getPid()) &&
+  if (isGemini301SeriesPID(device_->getDeviceInfo()->getPid()) &&
       (stream != OB_STREAM_COLOR && ae_reference_stream_ == "color")) {
     response->success = false;
     response->message = "AE Reference Stream is color, other sensors setting is not supported";
     return;
   }
-  if (isGemini305SeriesPID(device_->getDeviceInfo()->getPid()) &&
+  if (isGemini301SeriesPID(device_->getDeviceInfo()->getPid()) &&
       (stream != OB_STREAM_DEPTH && ae_reference_stream_ == "depth")) {
     response->success = false;
     response->message =
@@ -1163,6 +1294,67 @@ void OBCameraNode::setWhiteBalanceCallback(const std::shared_ptr<SetInt32 ::Requ
   }
 }
 
+void OBCameraNode::getColorWbCtrlCallback(const std::shared_ptr<GetInt32::Request>& request,
+                                          std::shared_ptr<GetInt32::Response>& response) {
+  (void)request;
+  std::lock_guard<decltype(device_lock_)> lock(device_lock_);
+  try {
+    response->data = device_->getIntProperty(OB_PROP_COLOR_WB_CTRL_INT);
+    response->success = true;
+    response->message = "OK";
+  } catch (const ob::Error& e) {
+    response->success = false;
+    response->message = orbbec_camera::formatObErrorWithStatus(e);
+  } catch (const std::exception& e) {
+    response->success = false;
+    response->message = e.what();
+  } catch (...) {
+    response->success = false;
+    response->message = "unknown error";
+  }
+}
+
+void OBCameraNode::setColorWbCtrlCallback(const std::shared_ptr<SetInt32::Request>& request,
+                                          std::shared_ptr<SetInt32::Response>& response) {
+  if (!request) {
+    response->success = false;
+    response->message = "Invalid request";
+    return;
+  }
+
+  std::lock_guard<decltype(device_lock_)> lock(device_lock_);
+  try {
+    const auto range = device_->getIntPropertyRange(OB_PROP_COLOR_WB_CTRL_INT);
+    if (request->data < range.min || request->data > range.max) {
+      response->success = false;
+      response->message = "value out of range [" + std::to_string(range.min) + ", " +
+                          std::to_string(range.max) + "]";
+      return;
+    }
+
+    device_->setIntProperty(OB_PROP_COLOR_WB_CTRL_INT, request->data);
+    response->success = true;
+    response->message = "OK";
+    if (isPropertyReadable(device_, OB_PROP_COLOR_WB_CTRL_INT)) {
+      const auto current_value = device_->getIntProperty(OB_PROP_COLOR_WB_CTRL_INT);
+      response->success = current_value == request->data;
+      if (!response->success) {
+        response->message = "device reported " + std::to_string(current_value) + " after setting " +
+                            std::to_string(request->data);
+      }
+    }
+  } catch (const ob::Error& e) {
+    response->success = false;
+    response->message = orbbec_camera::formatObErrorWithStatus(e);
+  } catch (const std::exception& e) {
+    response->success = false;
+    response->message = e.what();
+  } catch (...) {
+    response->success = false;
+    response->message = "unknown error";
+  }
+}
+
 void OBCameraNode::getAutoWhiteBalanceCallback(const std::shared_ptr<GetInt32::Request>& request,
                                                std::shared_ptr<GetInt32::Response>& response) {
   (void)request;
@@ -1191,6 +1383,75 @@ void OBCameraNode::setAutoWhiteBalanceCallback(const std::shared_ptr<SetBool::Re
     response->success = false;
     response->message = orbbec_camera::formatObErrorWithStatus(e);
   } catch (const std::exception& e) {
+    response->message = e.what();
+  } catch (...) {
+    response->success = false;
+    response->message = "unknown error";
+  }
+}
+
+void OBCameraNode::getAeAwbStatusCallback(const std::shared_ptr<GetInt32::Request>& request,
+                                          std::shared_ptr<GetInt32::Response>& response) {
+  (void)request;
+  try {
+    response->data = device_->getIntProperty(OB_PROP_COLOR_AE_AWB_STAT_INT);
+    response->success = true;
+  } catch (const ob::Error& e) {
+    response->success = false;
+    response->message = orbbec_camera::formatObErrorWithStatus(e);
+  } catch (const std::exception& e) {
+    response->success = false;
+    response->message = e.what();
+  } catch (...) {
+    response->success = false;
+    response->message = "unknown error";
+  }
+}
+
+void OBCameraNode::getAwbGainCallback(const std::shared_ptr<GetAwbGain::Request>& request,
+                                      std::shared_ptr<GetAwbGain::Response>& response) {
+  (void)request;
+  try {
+    OBAwbGainParams gain{};
+    uint32_t size = sizeof(gain);
+    device_->getStructuredData(OB_STRUCT_COLOR_AWB_GAIN, reinterpret_cast<uint8_t*>(&gain), &size);
+    response->r_gain = gain.rGain;
+    response->b_gain = gain.bGain;
+    response->g_gain = gain.gGain;
+    response->success = true;
+  } catch (const ob::Error& e) {
+    response->success = false;
+    response->message = orbbec_camera::formatObErrorWithStatus(e);
+  } catch (const std::exception& e) {
+    response->success = false;
+    response->message = e.what();
+  } catch (...) {
+    response->success = false;
+    response->message = "unknown error";
+  }
+}
+
+void OBCameraNode::setAwbGainCallback(const std::shared_ptr<SetAwbGain::Request>& request,
+                                      std::shared_ptr<SetAwbGain::Response>& response) {
+  try {
+    if (device_->getBoolProperty(OB_PROP_COLOR_AUTO_WHITE_BALANCE_BOOL)) {
+      response->success = false;
+      response->message = "auto white balance is enabled";
+      return;
+    }
+
+    OBAwbGainParams gain{};
+    gain.rGain = request->r_gain;
+    gain.bGain = request->b_gain;
+    gain.gGain = request->g_gain;
+    device_->setStructuredData(OB_STRUCT_COLOR_AWB_GAIN, reinterpret_cast<const uint8_t*>(&gain),
+                               sizeof(gain));
+    response->success = true;
+  } catch (const ob::Error& e) {
+    response->success = false;
+    response->message = orbbec_camera::formatObErrorWithStatus(e);
+  } catch (const std::exception& e) {
+    response->success = false;
     response->message = e.what();
   } catch (...) {
     response->success = false;
@@ -1273,15 +1534,15 @@ void OBCameraNode::setFanWorkModeCallback(const std::shared_ptr<SetInt32::Reques
   }
 }
 
-void OBCameraNode::setFloorEnableCallback(
+void OBCameraNode::setFloodEnableCallback(
     const std::shared_ptr<rmw_request_id_t>& request_header,
     const std::shared_ptr<std_srvs::srv::SetBool::Request>& request,
     std::shared_ptr<std_srvs::srv::SetBool::Response>& response) {
   (void)request_header;
   (void)response;
-  bool floor_enable = request->data;
+  bool flood_enable = request->data;
   try {
-    device_->setBoolProperty(OB_PROP_FLOOD_BOOL, floor_enable);
+    device_->setBoolProperty(OB_PROP_FLOOD_BOOL, flood_enable);
     response->success = true;
   } catch (const ob::Error& e) {
     response->success = false;
@@ -1440,6 +1701,86 @@ void OBCameraNode::getDeviceInfoCallback(const std::shared_ptr<GetDeviceInfo::Re
   }
 }
 
+void OBCameraNode::getActionConfigCallback(const std::shared_ptr<GetActionConfig::Request>& request,
+                                           std::shared_ptr<GetActionConfig::Response>& response) {
+  if (!request) {
+    response->success = false;
+    response->message = "Invalid request";
+    return;
+  }
+
+  std::lock_guard<decltype(device_lock_)> lock(device_lock_);
+  try {
+    const int action_signal_count = device_->getIntProperty(OB_PROP_ACTION_SIGNAL_COUNT_INT);
+    if (action_signal_count <= 0 ||
+        request->selector >= static_cast<uint32_t>(action_signal_count)) {
+      response->success = false;
+      response->message = "selector must be less than action signal count " +
+                          std::to_string(std::max(action_signal_count, 0));
+      return;
+    }
+
+    device_->setIntProperty(OB_PROP_ACTION_SELECTOR_INT, static_cast<int32_t>(request->selector));
+    response->action_signal_count = static_cast<uint32_t>(action_signal_count);
+    response->device_key =
+        static_cast<uint32_t>(device_->getIntProperty(OB_PROP_ACTION_DEVICE_KEY_INT));
+    response->group_key =
+        static_cast<uint32_t>(device_->getIntProperty(OB_PROP_ACTION_GROUP_KEY_INT));
+    response->group_mask =
+        static_cast<uint32_t>(device_->getIntProperty(OB_PROP_ACTION_GROUP_MASK_INT));
+    response->success = true;
+    response->message = "OK";
+  } catch (const ob::Error& e) {
+    response->success = false;
+    response->message = orbbec_camera::formatObErrorWithStatus(e);
+  } catch (const std::exception& e) {
+    response->success = false;
+    response->message = e.what();
+  } catch (...) {
+    response->success = false;
+    response->message = "unknown error";
+  }
+}
+
+void OBCameraNode::setActionConfigCallback(const std::shared_ptr<SetActionConfig::Request>& request,
+                                           std::shared_ptr<SetActionConfig::Response>& response) {
+  if (!request) {
+    response->success = false;
+    response->message = "Invalid request";
+    return;
+  }
+
+  std::lock_guard<decltype(device_lock_)> lock(device_lock_);
+  try {
+    const int action_signal_count = device_->getIntProperty(OB_PROP_ACTION_SIGNAL_COUNT_INT);
+    if (action_signal_count <= 0 ||
+        request->selector >= static_cast<uint32_t>(action_signal_count)) {
+      response->success = false;
+      response->message = "selector must be less than action signal count " +
+                          std::to_string(std::max(action_signal_count, 0));
+      return;
+    }
+
+    device_->setIntProperty(OB_PROP_ACTION_DEVICE_KEY_INT,
+                            static_cast<int32_t>(request->device_key));
+    device_->setIntProperty(OB_PROP_ACTION_SELECTOR_INT, static_cast<int32_t>(request->selector));
+    device_->setIntProperty(OB_PROP_ACTION_GROUP_KEY_INT, static_cast<int32_t>(request->group_key));
+    device_->setIntProperty(OB_PROP_ACTION_GROUP_MASK_INT,
+                            static_cast<int32_t>(request->group_mask));
+    response->success = true;
+    response->message = "OK";
+  } catch (const ob::Error& e) {
+    response->success = false;
+    response->message = orbbec_camera::formatObErrorWithStatus(e);
+  } catch (const std::exception& e) {
+    response->success = false;
+    response->message = e.what();
+  } catch (...) {
+    response->success = false;
+    response->message = "unknown error";
+  }
+}
+
 void OBCameraNode::getDeviceConfigCallback(const std::shared_ptr<GetDeviceConfig::Request>& request,
                                            std::shared_ptr<GetDeviceConfig::Response>& response) {
   (void)request;
@@ -1585,6 +1926,21 @@ void OBCameraNode::getDeviceConfigCallback(const std::shared_ptr<GetDeviceConfig
     RCLCPP_DEBUG_STREAM(logger_, "Failed to get current preset: " << e.what());
   } catch (...) {
     RCLCPP_DEBUG_STREAM(logger_, "Failed to get current preset");
+  }
+
+  try {
+    const char* version = device_->getCurrentPresetDepthWorkModeVersion();
+    if (version != nullptr) {
+      response->preset_depth_work_mode_version = version;
+    }
+  } catch (const ob::Error& e) {
+    RCLCPP_DEBUG_STREAM(logger_, "Failed to get current preset depth work mode version: "
+                                     << orbbec_camera::formatObErrorWithStatus(e));
+  } catch (const std::exception& e) {
+    RCLCPP_DEBUG_STREAM(logger_,
+                        "Failed to get current preset depth work mode version: " << e.what());
+  } catch (...) {
+    RCLCPP_DEBUG_STREAM(logger_, "Failed to get current preset depth work mode version");
   }
 
   try {
@@ -1942,6 +2298,8 @@ bool OBCameraNode::toggleSensor(const stream_index_pair& stream_index, bool enab
   try {
     const bool interleave_frame_enable = interleave_frame_enable_;
     stopStreams();
+    RCLCPP_DEBUG_STREAM(logger_, "Wait 1 second for streams to stop before toggling sensor");
+    std::this_thread::sleep_for(std::chrono::seconds(1));
     interleave_frame_enable_ = interleave_frame_enable;
     stopColorFrameThreads();
     clearColorFrameQueues();
@@ -1965,10 +2323,11 @@ void OBCameraNode::saveImageCallback(const std::shared_ptr<std_srvs::srv::Empty:
                                      std::shared_ptr<std_srvs::srv::Empty::Response>& response) {
   (void)request;
   (void)response;
+  std::lock_guard<std::mutex> lock(save_images_mutex_);
   for (const auto& stream_index : IMAGE_STREAMS) {
     if (enable_stream_[stream_index]) {
-      save_images_[stream_index] = true;
       save_images_count_[stream_index] = 0;
+      save_images_[stream_index].store(true, std::memory_order_release);
     }
   }
 }

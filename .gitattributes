@@ -1,0 +1,15 @@
+# Normalize text files to LF in both the repository and working tree.
+* text=auto eol=lf
+
+# Treat generated assets and bundled binaries as binary files.
+*.stl binary
+*.STL binary
+*.so binary
+*.so.* binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.zip binary
+*.gz binary

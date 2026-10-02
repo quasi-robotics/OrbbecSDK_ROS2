@@ -21,9 +21,16 @@
   <a href="https://docs.ros.org/en/jazzy/">
     <img src="https://img.shields.io/badge/ROS-Jazzy-f5792a?style=flat-square&amp;logo=ros&amp;logoColor=white" height="20" alt="ROS Jazzy">
   </a>
+  <a href="https://docs.ros.org/en/lyrical/">
+    <img src="https://img.shields.io/badge/ROS-Lyrical-f5792a?style=flat-square&amp;logo=ros&amp;logoColor=white" height="20" alt="ROS Lyrical">
+  </a>
+  <a href="https://docs.ros.org/en/rolling/">
+    <img src="https://img.shields.io/badge/ROS-Rolling-f5792a?style=flat-square&amp;logo=ros&amp;logoColor=white" height="20" alt="ROS Rolling">
+  </a>
   <img src="https://img.shields.io/badge/Ubuntu-20.04-0078d4?style=flat-square&amp;logo=ubuntu&amp;logoColor=white" height="20" alt="Ubuntu 20.04">
   <img src="https://img.shields.io/badge/Ubuntu-22.04-0078d4?style=flat-square&amp;logo=ubuntu&amp;logoColor=white" height="20" alt="Ubuntu 22.04">
   <img src="https://img.shields.io/badge/Ubuntu-24.04-0078d4?style=flat-square&amp;logo=ubuntu&amp;logoColor=white" height="20" alt="Ubuntu 24.04">
+  <img src="https://img.shields.io/badge/Ubuntu-26.04-0078d4?style=flat-square&amp;logo=ubuntu&amp;logoColor=white" height="20" alt="Ubuntu 26.04">
 
   <!-- Second row: -->
   <br>
@@ -40,12 +47,32 @@
 
 ## Introduction
 
-The **OrbbecSDK ROS2 Wrapper** provides seamless integration of Orbbec cameras with the ROS 2 ecosystem.
- It supports ROS2 **Foxy**, **Humble**, and **Jazzy** distributions.
+The **OrbbecSDK ROS2 Wrapper** provides seamless integration of Orbbec cameras with the ROS 2 ecosystem and supports the **ROS2 Foxy**, **Humble**, **Jazzy**, **Lyrical**, and **Rolling** distributions.
 
 - Default branch: **v2-main**
 - For legacy **OpenNI** devices: use the **main** branch
 - For users in China: use the [Gitee repository](https://gitee.com/orbbecdeveloper/OrbbecSDK_ROS2)
+
+## Start Here
+
+Detailed usage, parameters, and troubleshooting are maintained on the official
+[OrbbecSDK ROS2 documentation site](https://orbbec.github.io/OrbbecSDK_ROS2/en/index.html).
+Use the links below to go directly to the guide for your task.
+
+| I want to... | Go to... |
+| --- | --- |
+| Install the wrapper and configure device permissions | [Installation](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/2_installation/installation.html) |
+| Launch a camera and view images in RViz2 | [ROS Package QuickStarts](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/3_quickstarts/quickstart.html) |
+| Check device support, firmware, and the correct launch file | [Supported hardware](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/1_overview/introduction.html) |
+| Configure launch parameters, topics, services, TF, or point clouds | [Application Guide](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/4_application_guide/application_guide.html) |
+| Find maintenance, diagnostic, benchmark, or multi-camera tools | [Tool Index](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/6_benchmark/tools.html) |
+| Use network cameras, GMSL, multi-camera, or advanced modes | [Advanced Guide](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/5_advanced_guide/advanced_guide.html) |
+| Diagnose a failure or collect logs for support | [Frequently Asked Questions](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/8_FAQ/FAQ.html) |
+| Migrate an existing project from main (v1.x) | [Migration Guide](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/7_developer_guide/migration_guide.html) |
+| Use an Orbbec LiDAR | [LiDAR documentation](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/lidar_devices/index.html) |
+
+Source files for practical launch examples are listed in the
+[Examples index](./orbbec_camera/examples/).
 
 ## branch selection
 
@@ -236,9 +263,17 @@ If you need to migrate existing projects from the main (v1.x) branch to the v2-m
 
 **Environment configuration**
 
-Install ROS 2 according to the official guide:
+Install one of the supported ROS 2 distributions according to its official guide:
 
-* [ROS 2 installation (Ubuntu)](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html)
+* [Foxy](https://docs.ros.org/en/foxy/)
+* [Humble](https://docs.ros.org/en/humble/)
+* [Jazzy](https://docs.ros.org/en/jazzy/)
+
+Source the ROS 2 environment before running the commands below:
+
+```bash
+source /opt/ros/humble/setup.bash  # Replace humble with foxy or jazzy as needed
+```
 
 Install dependencies:
 
@@ -266,10 +301,10 @@ sudo apt update
 apt list | grep orbbec
 ```
 
-Install OrbbecSDK ROS2 package:
+If binary packages are available for your ROS 2 distribution, install the OrbbecSDK ROS2 packages with:
 
 ```bash
-sudo apt install ros-humble-orbbec-camera ros-humble-orbbec-description
+sudo apt install ros-${ROS_DISTRO}-orbbec-camera ros-${ROS_DISTRO}-orbbec-description
 ```
 
 After installation, you can use it directly without compilation.
@@ -314,12 +349,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```bash
 cd  ~/ros2_ws/src/OrbbecSDK_ROS2/orbbec_camera/scripts
 sudo bash install_udev_rules.sh
-sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 This step is **mandatory** for Linux users.
 
-`Notes:` If this script is not executed, open the device will fail due to permission issues. You need to run the sample with sudo (administrator privileges).
+> **Note:** Without the udev rules, the device may fail to open because of insufficient permissions. Install the rules and reconnect the camera instead of running ROS 2 nodes with `sudo`.
 
 ## Getting start
 
@@ -366,7 +400,7 @@ For more usage details, please refer to the official [OrbbecSDK ROS2 documentati
 
 ## Supported Devices
 
-Currently, the following devices are supported by the OrbbecSDK ROS2 Wrapper v2-main branch.  More devices support will be added in the near future. If you can not find your device in the table below, try the [main](https://github.com/orbbec/OrbbecSDK_ROS2)  branch.
+Currently, the following devices are supported by the OrbbecSDK ROS2 Wrapper v2-main branch.  More devices support will be added in the near future. If you can not find your device in the table below, try the [main](https://github.com/orbbec/OrbbecSDK_ROS2/tree/main) branch.
 
 For optimal performance, we strongly recommend updating to the latest firmware version. This ensures that you benefit from the most recent enhancements and bug fixes.
 
@@ -489,17 +523,10 @@ For optimal performance, we strongly recommend updating to the latest firmware v
 All launch files are essentially similar, with the primary difference being the default values of the parameters set
 for different models within the same series. Differences in USB standards, such as USB 2.0 versus USB 3.0, may require adjustments to these parameters. If you encounter a startup failure, please carefully review the specification manual. Pay special attention to the resolution settings in the launch file, as well as other parameters, to ensure compatibility and optimal performance.
 
-## Tutorial
-
-please refer to the official [OrbbecSDK ROS2 documentation](https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/5_advanced_guide/advanced_guide.html)
-
-## Examples
-
-To explore practical examples and gain insight into how to use the camera in ROS, please navigate to the [Examples](./orbbec_camera/examples/) section for more information.
-
-## Other useful links
+## Related Links
 
 - [OrbbecSDK ROS2 documentation](https://orbbec.github.io/OrbbecSDK_ROS2/en/index.html)
+- [Examples index](./orbbec_camera/examples/)
 - [OrbbecSDK_v2](https://github.com/orbbec/OrbbecSDK_v2/releases)
 - [Gemini 330 depth presets](https://www.orbbec.com/docs/g330-use-depth-presets/)
 

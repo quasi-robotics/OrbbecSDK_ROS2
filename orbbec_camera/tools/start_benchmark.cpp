@@ -3,15 +3,6 @@
 #include <orbbec_camera/ob_camera_node_driver.h>
 #include <orbbec_camera/utils.h>
 #include "orbbec_camera_msgs/msg/metadata.hpp"
-#if __has_include(<message_filters/subscriber.hpp>)
-#include <message_filters/subscriber.hpp>
-#include <message_filters/sync_policies/approximate_time.hpp>
-#include <message_filters/synchronizer.hpp>
-#else
-#include <message_filters/subscriber.h>
-#include <message_filters/sync_policies/approximate_time.h>
-#include <message_filters/synchronizer.h>
-#endif
 #include <filesystem>
 
 namespace orbbec_camera {
@@ -27,6 +18,16 @@ class StartBenchmark : public rclcpp::Node {
           color_topics_[i], custom_qos,
           [this, i](std::shared_ptr<const sensor_msgs::msg::Image> msg) {
             this->color_Callback(msg, i);
+          }));
+      left_color_subs_.push_back(this->create_subscription<sensor_msgs::msg::Image>(
+          left_color_topics_[i], custom_qos,
+          [this, i](std::shared_ptr<const sensor_msgs::msg::Image> msg) {
+            this->leftColorCallback(msg, i);
+          }));
+      right_color_subs_.push_back(this->create_subscription<sensor_msgs::msg::Image>(
+          right_color_topics_[i], custom_qos,
+          [this, i](std::shared_ptr<const sensor_msgs::msg::Image> msg) {
+            this->rightColorCallback(msg, i);
           }));
       depth_subs_.push_back(this->create_subscription<sensor_msgs::msg::Image>(
           depth_topics_[i], custom_qos,
@@ -54,6 +55,10 @@ class StartBenchmark : public rclcpp::Node {
             this->color_point_cloud_Callback(msg, i);
           }));
       RCLCPP_INFO_STREAM(rclcpp::get_logger("StartBenchmark"), color_topics_[i] << " is subed ");
+      RCLCPP_INFO_STREAM(rclcpp::get_logger("StartBenchmark"),
+                         left_color_topics_[i] << " is subed ");
+      RCLCPP_INFO_STREAM(rclcpp::get_logger("StartBenchmark"),
+                         right_color_topics_[i] << " is subed ");
       RCLCPP_INFO_STREAM(rclcpp::get_logger("StartBenchmark"), depth_topics_[i] << " is subed ");
       RCLCPP_INFO_STREAM(rclcpp::get_logger("StartBenchmark"), left_ir_topics_[i] << " is subed ");
       RCLCPP_INFO_STREAM(rclcpp::get_logger("StartBenchmark"), right_ir_topics_[i] << " is subed ");
@@ -66,6 +71,8 @@ class StartBenchmark : public rclcpp::Node {
 
  private:
   std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> color_subs_;
+  std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> left_color_subs_;
+  std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> right_color_subs_;
   std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> depth_subs_;
   std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> left_ir_subs_;
   std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> right_ir_subs_;
@@ -76,6 +83,8 @@ class StartBenchmark : public rclcpp::Node {
 
   std::vector<std::string> camera_name_;
   std::vector<std::string> color_topics_;
+  std::vector<std::string> left_color_topics_;
+  std::vector<std::string> right_color_topics_;
   std::vector<std::string> depth_topics_;
   std::vector<std::string> left_ir_topics_;
   std::vector<std::string> right_ir_topics_;
@@ -97,6 +106,8 @@ class StartBenchmark : public rclcpp::Node {
     camera_name_ =
         json_data["start_benchmark_params"]["camera_name"].get<std::vector<std::string>>();
     color_topics_.resize(camera_name_.size());
+    left_color_topics_.resize(camera_name_.size());
+    right_color_topics_.resize(camera_name_.size());
     depth_topics_.resize(camera_name_.size());
     left_ir_topics_.resize(camera_name_.size());
     right_ir_topics_.resize(camera_name_.size());
@@ -104,6 +115,8 @@ class StartBenchmark : public rclcpp::Node {
     color_point_cloud_topics_.resize(camera_name_.size());
     for (size_t i = 0; i < camera_name_.size(); ++i) {
       color_topics_[i] = "/" + camera_name_[i] + "/color/image_raw";
+      left_color_topics_[i] = "/" + camera_name_[i] + "/left_color/image_raw";
+      right_color_topics_[i] = "/" + camera_name_[i] + "/right_color/image_raw";
       depth_topics_[i] = "/" + camera_name_[i] + "/depth/image_raw";
       left_ir_topics_[i] = "/" + camera_name_[i] + "/left_ir/image_raw";
       right_ir_topics_[i] = "/" + camera_name_[i] + "/right_ir/image_raw";
@@ -116,6 +129,17 @@ class StartBenchmark : public rclcpp::Node {
     std::lock_guard<std::mutex> lock(image_mutex_);
     RCLCPP_DEBUG_STREAM(rclcpp::get_logger("StartBenchmark"),
                         "time is : " << msg->step << "color is subed " << index << "is subed");
+  }
+  void leftColorCallback(std::shared_ptr<const sensor_msgs::msg::Image> msg, size_t index) {
+    std::lock_guard<std::mutex> lock(image_mutex_);
+    RCLCPP_DEBUG_STREAM(rclcpp::get_logger("StartBenchmark"),
+                        "time is : " << msg->step << "left_color is subed " << index << "is subed");
+  }
+  void rightColorCallback(std::shared_ptr<const sensor_msgs::msg::Image> msg, size_t index) {
+    std::lock_guard<std::mutex> lock(image_mutex_);
+    RCLCPP_DEBUG_STREAM(
+        rclcpp::get_logger("StartBenchmark"),
+        "time is : " << msg->step << "right_color is subed " << index << "is subed");
   }
   void depth_Callback(std::shared_ptr<const sensor_msgs::msg::Image> msg, size_t index) {
     std::lock_guard<std::mutex> lock(image_mutex_);

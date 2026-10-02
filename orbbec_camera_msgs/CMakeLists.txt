@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.10)
 project(orbbec_camera_msgs)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -7,6 +7,7 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(action_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -17,6 +18,7 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(
     ${PROJECT_NAME}
     "msg/DeviceInfo.msg"
+    "msg/StreamStatus.msg"
     "msg/DeviceStatus.msg"
     "msg/DepthFilterParam.msg"
     "msg/DepthFilterState.msg"
@@ -27,20 +29,27 @@ rosidl_generate_interfaces(
     "msg/RGBD.msg"
     "msg/StreamProfile.msg"
     "srv/GetBool.srv"
+    "srv/GetActionConfig.srv"
     "srv/GetDeviceConfig.srv"
     "srv/GetDeviceInfo.srv"
     "srv/GetCameraInfo.srv"
     "srv/GetInt32.srv"
+    "srv/GetAwbGain.srv"
     "srv/GetString.srv"
     "srv/SetFilter.srv"
+    "srv/SetActionConfig.srv"
     "srv/SetInt32.srv"
+    "srv/SetAwbGain.srv"
     "srv/SetString.srv"
     "srv/SetArrays.srv"
     "srv/GetUserCalibParams.srv"
     "srv/SetUserCalibParams.srv"
     "srv/SetBagRecording.srv"
     "srv/SetStreamProfile.srv"
+    "srv/SendActionCommand.srv"
+    "action/RunAeAwbLockTest.action"
     DEPENDENCIES
+    action_msgs
     sensor_msgs
     std_msgs
 )

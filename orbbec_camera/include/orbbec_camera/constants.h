@@ -23,8 +23,8 @@
 #define THREAD_NUM 4
 
 #define OB_ROS_MAJOR_VERSION 2
-#define OB_ROS_MINOR_VERSION 9
-#define OB_ROS_PATCH_VERSION 3
+#define OB_ROS_MINOR_VERSION 10
+#define OB_ROS_PATCH_VERSION 6
 
 #ifndef STRINGIFY
 #define STRINGIFY(arg) #arg
@@ -143,15 +143,31 @@ const int32_t GEMINI_435Le_PID = 0x815;                   // Gemini 435Le
 const int32_t GEMINI_305_PID = 0x0840;                    // Gemini 305
 const int32_t GEMINI_305_PID2 = 0x0841;                   // Gemini 305
 const int32_t GEMINI_305G_PID = 0x0842;                   // Gemini 305g
+const int32_t GEMINI_301G_PID = 0x0843;                   // Gemini 301g
 const int32_t GEMINI_309G_PID = 0x0845;                   // Gemini 309g
 const int32_t GEMINI_338LG_PID = 0x081A;                  // Gemini 338Lg
 const int32_t GEMINI_338LE_PID = 0x081B;                  // Gemini 338Le
 const int32_t GEMINI_338L_PID = 0x081C;                   // Gemini 338L
 const int32_t GEMINI_331L_PID = 0x081D;                   // Gemini 331L
 
-inline bool isGemini305SeriesPID(uint32_t pid) {
+inline bool isGemini330SeriesPID(uint32_t pid) {
+  return pid == GEMINI_335_PID || pid == GEMINI_330_PID || pid == GEMINI_336_PID ||
+         pid == GEMINI_335L_PID || pid == GEMINI_330L_PID || pid == GEMINI_336L_PID ||
+         pid == GEMINI_335LG_PID || pid == GEMINI_336LG_PID || pid == GEMINI_335LE_PID ||
+         pid == GEMINI_336LE_PID || pid == CUSTOM_ADVANTECH_GEMINI_336_PID ||
+         pid == CUSTOM_ADVANTECH_GEMINI_336L_PID || pid == GEMINI_338_PID ||
+         pid == GEMINI_338LG_PID || pid == GEMINI_338LE_PID || pid == GEMINI_338L_PID ||
+         pid == GEMINI_331L_PID;
+}
+
+inline bool isGemini301SeriesPID(uint32_t pid) {
   return pid == GEMINI_305_PID || pid == GEMINI_305_PID2 || pid == GEMINI_305G_PID ||
-         pid == GEMINI_309G_PID;
+         pid == GEMINI_301G_PID || pid == GEMINI_309G_PID;
+}
+
+inline bool isGmslCameraPID(uint32_t pid) {
+  return pid == GEMINI_335LG_PID || pid == GEMINI_338LG_PID || pid == GEMINI_345LG_PID ||
+         pid == GEMINI_305G_PID || pid == GEMINI_309G_PID;
 }
 
 }  // namespace orbbec_camera

@@ -49,4 +49,11 @@ class image_transport_publisher : public image_publisher {
  private:
   std::shared_ptr<image_transport::Publisher> image_publisher_impl;
 };
+
+// Keep image_transport plugins and their DDS endpoints alive across camera reconnects.
+std::shared_ptr<image_publisher> getGlobalImageTransportPublisher(rclcpp::Node& node,
+                                                                  const std::string& topic_name,
+                                                                  const rmw_qos_profile_t& qos);
+void releaseGlobalImageTransportPublisher(rclcpp::Node& node, const std::string& topic_name);
+void clearGlobalImageTransportPublishers(rclcpp::Node& node);
 }  // namespace orbbec_camera

@@ -43,7 +43,7 @@ def load_parameters(context, args):
     if config_file_path:
         yaml_params = load_yaml(config_file_path)
         default_params = merge_params(default_params, yaml_params)
-    skip_convert = {'config_file_path', 'usb_port', 'serial_number'}
+    skip_convert = {'config_file_path', 'usb_port', 'serial_number', 'device_preset_version'}
     return {
         key: (value if key in skip_convert else convert_value(value))
         for key, value in default_params.items()
@@ -57,8 +57,6 @@ def generate_launch_description():
         DeclareLaunchArgument('serial_number', default_value=''),
         DeclareLaunchArgument('usb_port', default_value=''),
         DeclareLaunchArgument('device_num', default_value='1'),
-        DeclareLaunchArgument('upgrade_firmware', default_value=''),
-        DeclareLaunchArgument('preset_firmware_path', default_value=''),
         DeclareLaunchArgument('load_config_json_file_path', default_value=''),
         DeclareLaunchArgument('export_config_json_file_path', default_value=''),
         DeclareLaunchArgument('uvc_backend', default_value='libuvc'),#libuvc or v4l2
@@ -223,6 +221,7 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_laser', default_value='true'),
         DeclareLaunchArgument('depth_precision', default_value=''),
         DeclareLaunchArgument('device_preset', default_value='Default'),
+        DeclareLaunchArgument('device_preset_version', default_value=''),
         DeclareLaunchArgument('retry_on_usb3_detection_failure', default_value='false'),
         DeclareLaunchArgument('laser_energy_level', default_value='-1'),
         DeclareLaunchArgument('enable_sync_host_time', default_value='false'),
@@ -235,6 +234,7 @@ def generate_launch_description():
         DeclareLaunchArgument('config_file_path', default_value=''),
         DeclareLaunchArgument('enable_heartbeat', default_value='false'),
         DeclareLaunchArgument('enable_firmware_log', default_value='false'),
+        DeclareLaunchArgument('monitor_poll_interval_sec', default_value='-1'),
         DeclareLaunchArgument('gmsl_trigger_fps', default_value='3000'),
         DeclareLaunchArgument('enable_gmsl_trigger', default_value='false'),
         DeclareLaunchArgument('disparity_range_mode', default_value='-1'),

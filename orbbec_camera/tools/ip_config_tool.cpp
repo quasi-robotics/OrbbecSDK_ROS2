@@ -14,6 +14,9 @@ using namespace ob;
 namespace {
 
 constexpr int kFirmwareLogDrainDelaySec = 5;
+constexpr char kDocumentationUrl[] =
+    "https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/6_benchmark/"
+    "network_config_tools.html";
 
 void waitForFirmwareLogDrain(const rclcpp::Logger &logger) {
   RCLCPP_INFO(logger, "Waiting %d seconds to keep firmware log alive...",
@@ -23,6 +26,12 @@ void waitForFirmwareLogDrain(const rclcpp::Logger &logger) {
 
 bool isSdkLogEnabled(const std::string &log_level) {
   return orbbec_camera::obLogSeverityFromString(log_level) != OBLogSeverity::OB_LOG_SEVERITY_OFF;
+}
+
+int reportFailure(const rclcpp::Logger &logger) {
+  RCLCPP_ERROR(logger, "For usage and troubleshooting, see: %s", kDocumentationUrl);
+  rclcpp::shutdown();
+  return 1;
 }
 
 }  // namespace
@@ -177,7 +186,9 @@ void printHelp() {
       << "    Debug:   ros2 run orbbec_camera ip_config_tool -- \\\n"
       << "             set_ip --current_ip 192.168.1.10 --enable_dhcp true "
          "--enable_persistent_ip false \\\n"
-      << "             --sdk_log_level debug\n";
+      << "             --sdk_log_level debug\n\n"
+      << "Documentation:\n"
+      << "  " << kDocumentationUrl << "\n";
 }
 
 bool parseArgs(int argc, char **argv, CliArgs &args, std::string &error) {
@@ -461,18 +472,15 @@ int main(int argc, char **argv) {
         uint8_t gateway[4] = {0};
         if (args.persistent_ip && !parseIpString(args.new_ip, address)) {
           RCLCPP_ERROR(logger, "Invalid new_ip format: %s", args.new_ip.c_str());
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
         if (args.persistent_ip && !parseIpString(args.mask, mask)) {
           RCLCPP_ERROR(logger, "Invalid mask format: %s", args.mask.c_str());
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
         if (args.persistent_ip && !parseIpString(args.gateway, gateway)) {
           RCLCPP_ERROR(logger, "Invalid gateway format: %s", args.gateway.c_str());
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
 
         OBNetIpConfigV2 ip_config_v2{};
@@ -521,8 +529,7 @@ int main(int argc, char **argv) {
                        "Legacy IP config (1041) supports mutually exclusive DHCP and persistent "
                        "IP only. Use --enable_dhcp true --enable_persistent_ip false or "
                        "--enable_dhcp false --enable_persistent_ip true.");
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
         ip_config.dhcp = args.dhcp ? 1 : 0;
         uint8_t address[4] = {0};
@@ -530,18 +537,15 @@ int main(int argc, char **argv) {
         uint8_t gateway[4] = {0};
         if (args.persistent_ip && !parseIpString(args.new_ip, address)) {
           RCLCPP_ERROR(logger, "Invalid new_ip format: %s", args.new_ip.c_str());
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
         if (args.persistent_ip && !parseIpString(args.mask, mask)) {
           RCLCPP_ERROR(logger, "Invalid mask format: %s", args.mask.c_str());
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
         if (args.persistent_ip && !parseIpString(args.gateway, gateway)) {
           RCLCPP_ERROR(logger, "Invalid gateway format: %s", args.gateway.c_str());
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
         if (args.persistent_ip) {
           std::memcpy(ip_config.address, address, sizeof(address));
@@ -579,18 +583,15 @@ int main(int argc, char **argv) {
       if (!args.dhcp) {
         if (!parseIpString(args.new_ip, ip_config.address)) {
           RCLCPP_ERROR(logger, "Invalid new_ip format: %s", args.new_ip.c_str());
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
         if (!parseIpString(args.mask, ip_config.mask)) {
           RCLCPP_ERROR(logger, "Invalid mask format: %s", args.mask.c_str());
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
         if (!parseIpString(args.gateway, ip_config.gateway)) {
           RCLCPP_ERROR(logger, "Invalid gateway format: %s", args.gateway.c_str());
-          rclcpp::shutdown();
-          return 1;
+          return reportFailure(logger);
         }
       }
 
@@ -607,8 +608,7 @@ int main(int argc, char **argv) {
         }
       } else {
         RCLCPP_ERROR(logger, "Force-ip failed (SDK returned false).");
-        rclcpp::shutdown();
-        return 1;
+        return reportFailure(logger);
       }
     }
 
@@ -621,16 +621,14 @@ int main(int argc, char **argv) {
 
       if (!device->isPropertySupported(OB_PROP_DHCP_ASSIGN_IP_TIMEOUT_INT, OB_PERMISSION_WRITE)) {
         RCLCPP_ERROR(logger, "Current device or firmware does not support DHCP assign IP timeout");
-        rclcpp::shutdown();
-        return 1;
+        return reportFailure(logger);
       }
 
       auto range = device->getIntPropertyRange(OB_PROP_DHCP_ASSIGN_IP_TIMEOUT_INT);
       if (args.dhcp_assign_ip_timeout < range.min || args.dhcp_assign_ip_timeout > range.max) {
         RCLCPP_ERROR(logger, "Timeout %d is out of range [%d, %d]", args.dhcp_assign_ip_timeout,
                      range.min, range.max);
-        rclcpp::shutdown();
-        return 1;
+        return reportFailure(logger);
       }
 
       device->setIntProperty(OB_PROP_DHCP_ASSIGN_IP_TIMEOUT_INT, args.dhcp_assign_ip_timeout);
@@ -645,16 +643,13 @@ int main(int argc, char **argv) {
 
   } catch (ob::Error &e) {
     RCLCPP_ERROR(logger, "ip_config_tool: %s", orbbec_camera::formatObErrorWithStatus(e).c_str());
-    rclcpp::shutdown();
-    return 1;
+    return reportFailure(logger);
   } catch (const std::exception &e) {
     RCLCPP_ERROR(logger, "ip_config_tool: %s", e.what());
-    rclcpp::shutdown();
-    return 1;
+    return reportFailure(logger);
   } catch (...) {
     RCLCPP_ERROR(logger, "ip_config_tool: unknown error");
-    rclcpp::shutdown();
-    return 1;
+    return reportFailure(logger);
   }
 
   rclcpp::shutdown();

@@ -17,14 +17,19 @@
 #pragma once
 #include <ostream>
 #include <Eigen/Dense>
-#include <tf2/LinearMath/Quaternion.h>
 #include <rclcpp/rclcpp.hpp>
 
 #include "libobsensor/ObSensor.hpp"
 #include "sensor_msgs/distortion_models.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "orbbec_camera_msgs/msg/extrinsics.hpp"
-#include "magic_enum/magic_enum.hpp"
+#if __has_include(<tf2/LinearMath/Quaternion.hpp>)
+#include <tf2/LinearMath/Quaternion.hpp>
+#elif __has_include(<tf2/LinearMath/Quaternion.h>)
+#include <tf2/LinearMath/Quaternion.h>
+#else
+#error "No compatible tf2 Quaternion header found"
+#endif
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <opencv2/opencv.hpp>
 #include <openssl/evp.h>
@@ -73,18 +78,18 @@ inline std::string formatObErrorWithStatus(const ob::Error& e) {
 
 #define TRY_TO_SET_PROPERTY(func, property, value)                                               \
   try {                                                                                          \
-    device_->func(property, value);                                                              \
+    device_->func((property), (value));                                                          \
   } catch (const ob::Error& e) {                                                                 \
-    RCLCPP_ERROR_STREAM(logger_, "Failed to set " << property << " to " << value << " in "       \
+    RCLCPP_ERROR_STREAM(logger_, "Failed to set " << (property) << " to " << (value) << " in "   \
                                                   << __FUNCTION__ << " at line " << __LINE__     \
                                                   << ": "                                        \
                                                   << orbbec_camera::formatObErrorWithStatus(e)); \
   } catch (const std::exception& e) {                                                            \
-    RCLCPP_ERROR_STREAM(logger_, "Failed to set " << property << " to " << value << " in "       \
+    RCLCPP_ERROR_STREAM(logger_, "Failed to set " << (property) << " to " << (value) << " in "   \
                                                   << __FUNCTION__ << " at line " << __LINE__     \
                                                   << ": " << e.what());                          \
   } catch (...) {                                                                                \
-    RCLCPP_ERROR_STREAM(logger_, "Failed to set " << property << " to " << value << " in "       \
+    RCLCPP_ERROR_STREAM(logger_, "Failed to set " << (property) << " to " << (value) << " in "   \
                                                   << __FUNCTION__ << " at line " << __LINE__);   \
   }
 
@@ -182,6 +187,8 @@ std::ostream& operator<<(std::ostream& os, const OBFormat& rhs);
 std::string ObDeviceTypeToString(const OBDeviceType& type);
 
 rmw_qos_profile_t getRMWQosProfileFromString(const std::string& str_qos);
+
+std::string getRMWQosProfileDescription(const rmw_qos_profile_t& qos_profile);
 
 bool isOpenNIDevice(int pid);
 

@@ -1,0 +1,239 @@
+#include "orbbec_camera/timestamp_csv_logger.h"
+
+#include "orbbec_camera/frame_timestamp_csv_logger.h"
+#include "orbbec_camera/imu_timestamp_csv_logger.h"
+
+#include <exception>
+#include <utility>
+
+namespace orbbec_camera {
+
+TimestampCsvLogger::TimestampCsvLogger(Config config, rclcpp::Logger logger)
+    : logger_(std::move(logger)) {
+  const auto create_image_logger = [this, &config](FrameTimestampCsvLogger::OutputMode mode) {
+    auto timestamp_logger = std::make_unique<FrameTimestampCsvLogger>(
+        config.frame_drop_log_enabled, config.csv_file_path, mode, logger_);
+    if (!timestamp_logger->enabled()) {
+      timestamp_logger.reset();
+    }
+    return timestamp_logger;
+  };
+
+  if (config.frame_sync_enabled && (config.color_enabled || config.depth_enabled)) {
+    synced_image_logger_ = create_image_logger(FrameTimestampCsvLogger::OutputMode::SYNCED);
+  } else {
+    if (config.color_enabled) {
+      color_logger_ = create_image_logger(FrameTimestampCsvLogger::OutputMode::COLOR);
+    }
+    if (config.depth_enabled) {
+      depth_logger_ = create_image_logger(FrameTimestampCsvLogger::OutputMode::DEPTH);
+    }
+  }
+  if (config.left_color_enabled) {
+    left_color_logger_ = create_image_logger(FrameTimestampCsvLogger::OutputMode::LEFT_COLOR);
+  }
+  if (config.right_color_enabled) {
+    right_color_logger_ = create_image_logger(FrameTimestampCsvLogger::OutputMode::RIGHT_COLOR);
+  }
+  if (config.left_ir_enabled) {
+    left_ir_logger_ = create_image_logger(FrameTimestampCsvLogger::OutputMode::LEFT_IR);
+  }
+  if (config.right_ir_enabled) {
+    right_ir_logger_ = create_image_logger(FrameTimestampCsvLogger::OutputMode::RIGHT_IR);
+  }
+
+  if (config.csv_file_path.empty()) {
+    return;
+  }
+
+  const auto create_imu_logger = [this, &config](ImuTimestampCsvLogger::OutputMode mode) {
+    auto timestamp_logger =
+        std::make_unique<ImuTimestampCsvLogger>(config.csv_file_path, mode, logger_);
+    if (!timestamp_logger->enabled()) {
+      timestamp_logger.reset();
+    }
+    return timestamp_logger;
+  };
+
+  if (config.imu_sync_enabled) {
+    synced_imu_logger_ = create_imu_logger(ImuTimestampCsvLogger::OutputMode::SYNCED);
+  } else {
+    if (config.accel_enabled) {
+      accel_logger_ = create_imu_logger(ImuTimestampCsvLogger::OutputMode::ACCEL);
+    }
+    if (config.gyro_enabled) {
+      gyro_logger_ = create_imu_logger(ImuTimestampCsvLogger::OutputMode::GYRO);
+    }
+  }
+}
+
+TimestampCsvLogger::~TimestampCsvLogger() noexcept { shutdown(); }
+
+bool TimestampCsvLogger::enabled() const {
+  return imageEnabled() || syncedImuEnabled() || standaloneImuEnabled(OB_STREAM_ACCEL) ||
+         standaloneImuEnabled(OB_STREAM_GYRO);
+}
+
+bool TimestampCsvLogger::imageEnabled() const {
+  return (synced_image_logger_ && synced_image_logger_->enabled()) ||
+         (color_logger_ && color_logger_->enabled()) ||
+         (left_color_logger_ && left_color_logger_->enabled()) ||
+         (right_color_logger_ && right_color_logger_->enabled()) ||
+         (depth_logger_ && depth_logger_->enabled()) ||
+         (left_ir_logger_ && left_ir_logger_->enabled()) ||
+         (right_ir_logger_ && right_ir_logger_->enabled());
+}
+
+bool TimestampCsvLogger::imageStreamEnabled(OBStreamType stream_type) const {
+  const auto *timestamp_logger = imageLoggerForStream(stream_type);
+  return timestamp_logger && timestamp_logger->enabled();
+}
+
+bool TimestampCsvLogger::syncedImuEnabled() const {
+  return synced_imu_logger_ && synced_imu_logger_->enabled();
+}
+
+bool TimestampCsvLogger::standaloneImuEnabled(OBStreamType stream_type) const {
+  const auto *timestamp_logger = standaloneImuLoggerForStream(stream_type);
+  return timestamp_logger && timestamp_logger->enabled();
+}
+
+void TimestampCsvLogger::recordImageFrameSet(const std::shared_ptr<ob::Frame> &color_frame,
+                                             const std::shared_ptr<ob::Frame> &depth_frame,
+                                             int64_t arrival_system_us, int64_t arrival_steady_us,
+                                             bool track_color, bool track_depth,
+                                             bool color_image_publish_expected,
+                                             bool depth_image_publish_expected) {
+  if (synced_image_logger_) {
+    synced_image_logger_->recordFrameSet(
+        color_frame, depth_frame, arrival_system_us, arrival_steady_us, track_color, track_depth,
+        color_image_publish_expected, depth_image_publish_expected);
+    return;
+  }
+
+  if (track_color && color_logger_) {
+    color_logger_->recordStandaloneFrameArrival(OB_STREAM_COLOR, color_frame, arrival_system_us,
+                                                arrival_steady_us, color_image_publish_expected);
+  }
+  if (track_depth && depth_logger_) {
+    depth_logger_->recordStandaloneFrameArrival(OB_STREAM_DEPTH, depth_frame, arrival_system_us,
+                                                arrival_steady_us, depth_image_publish_expected);
+  }
+}
+
+void TimestampCsvLogger::recordImageFrameArrival(OBStreamType stream_type,
+                                                 const std::shared_ptr<ob::Frame> &frame,
+                                                 int64_t arrival_system_us,
+                                                 int64_t arrival_steady_us,
+                                                 bool image_publish_expected) {
+  auto *timestamp_logger = imageLoggerForStream(stream_type);
+  if (timestamp_logger) {
+    timestamp_logger->recordStandaloneFrameArrival(stream_type, frame, arrival_system_us,
+                                                   arrival_steady_us, image_publish_expected);
+  }
+}
+
+void TimestampCsvLogger::recordImagePrePublish(OBStreamType stream_type,
+                                               const std::shared_ptr<ob::Frame> &frame,
+                                               int64_t publish_system_us,
+                                               int64_t publish_steady_us) {
+  auto *timestamp_logger = imageLoggerForStream(stream_type);
+  if (timestamp_logger) {
+    timestamp_logger->recordPreImagePublish(stream_type, frame, publish_system_us,
+                                            publish_steady_us);
+  }
+}
+
+void TimestampCsvLogger::recordImagePublishSkipped(OBStreamType stream_type,
+                                                   const std::shared_ptr<ob::Frame> &frame) {
+  auto *timestamp_logger = imageLoggerForStream(stream_type);
+  if (timestamp_logger) {
+    timestamp_logger->recordImagePublishSkipped(stream_type, frame);
+  }
+}
+
+void TimestampCsvLogger::recordSyncedImu(const std::shared_ptr<ob::Frame> &accel_frame,
+                                         const std::shared_ptr<ob::Frame> &gyro_frame,
+                                         int64_t arrival_system_us,
+                                         std::optional<int64_t> publish_system_us) {
+  if (synced_imu_logger_) {
+    synced_imu_logger_->recordFrameSet(accel_frame, gyro_frame, arrival_system_us,
+                                       publish_system_us);
+  }
+}
+
+void TimestampCsvLogger::recordStandaloneImu(OBStreamType stream_type,
+                                             const std::shared_ptr<ob::Frame> &frame,
+                                             int64_t arrival_system_us,
+                                             std::optional<int64_t> publish_system_us) {
+  auto *timestamp_logger = standaloneImuLoggerForStream(stream_type);
+  if (timestamp_logger) {
+    timestamp_logger->recordStandaloneFrame(stream_type, frame, arrival_system_us,
+                                            publish_system_us);
+  }
+}
+
+void TimestampCsvLogger::shutdown() noexcept {
+  if (shutdown_requested_.exchange(true)) {
+    return;
+  }
+
+  const auto shutdown_logger = [this](auto &timestamp_logger, const char *name) {
+    if (!timestamp_logger) {
+      return;
+    }
+    try {
+      timestamp_logger->shutdown();
+    } catch (const std::exception &e) {
+      RCLCPP_WARN_STREAM(logger_, "Exception while shutting down " << name << ": " << e.what());
+    } catch (...) {
+      RCLCPP_WARN_STREAM(logger_, "Unknown exception while shutting down " << name);
+    }
+  };
+
+  shutdown_logger(synced_image_logger_, "synced image timestamp CSV logger");
+  shutdown_logger(color_logger_, "color timestamp CSV logger");
+  shutdown_logger(left_color_logger_, "left color timestamp CSV logger");
+  shutdown_logger(right_color_logger_, "right color timestamp CSV logger");
+  shutdown_logger(depth_logger_, "depth timestamp CSV logger");
+  shutdown_logger(left_ir_logger_, "left IR timestamp CSV logger");
+  shutdown_logger(right_ir_logger_, "right IR timestamp CSV logger");
+  shutdown_logger(synced_imu_logger_, "synced IMU timestamp CSV logger");
+  shutdown_logger(accel_logger_, "accel timestamp CSV logger");
+  shutdown_logger(gyro_logger_, "gyro timestamp CSV logger");
+}
+
+FrameTimestampCsvLogger *TimestampCsvLogger::imageLoggerForStream(OBStreamType stream_type) const {
+  if (stream_type == OB_STREAM_COLOR) {
+    return synced_image_logger_ ? synced_image_logger_.get() : color_logger_.get();
+  }
+  if (stream_type == OB_STREAM_DEPTH) {
+    return synced_image_logger_ ? synced_image_logger_.get() : depth_logger_.get();
+  }
+  if (stream_type == OB_STREAM_COLOR_LEFT) {
+    return left_color_logger_.get();
+  }
+  if (stream_type == OB_STREAM_COLOR_RIGHT) {
+    return right_color_logger_.get();
+  }
+  if (stream_type == OB_STREAM_IR_LEFT) {
+    return left_ir_logger_.get();
+  }
+  if (stream_type == OB_STREAM_IR_RIGHT) {
+    return right_ir_logger_.get();
+  }
+  return nullptr;
+}
+
+ImuTimestampCsvLogger *TimestampCsvLogger::standaloneImuLoggerForStream(
+    OBStreamType stream_type) const {
+  if (stream_type == OB_STREAM_ACCEL) {
+    return accel_logger_.get();
+  }
+  if (stream_type == OB_STREAM_GYRO) {
+    return gyro_logger_.get();
+  }
+  return nullptr;
+}
+
+}  // namespace orbbec_camera

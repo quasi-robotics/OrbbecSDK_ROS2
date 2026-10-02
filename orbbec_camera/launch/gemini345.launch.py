@@ -42,7 +42,8 @@ def load_parameters(context, args):
     if config_file_path:
         yaml_params = load_yaml(config_file_path)
         default_params = merge_params(default_params, yaml_params)
-    skip_convert = {'config_file_path', 'usb_port', 'serial_number', 'bag_record_filename', 'bag_filename'}
+    skip_convert = {'config_file_path', 'usb_port', 'serial_number', 'bag_record_filename', 'bag_filename',
+                    'enhanced_depth_model_path', 'depth_colorizer_mode'}
 
     result = {}
     for key, value in default_params.items():
@@ -76,8 +77,6 @@ def generate_launch_description():
         DeclareLaunchArgument('bag_record_filename', default_value=''),
         DeclareLaunchArgument('bag_filename', default_value=''),
         DeclareLaunchArgument('bag_loop', default_value='false'),
-        DeclareLaunchArgument('upgrade_firmware', default_value=''),
-        DeclareLaunchArgument('preset_firmware_path', default_value=''),
         DeclareLaunchArgument('load_config_json_file_path', default_value=''),
         DeclareLaunchArgument('export_config_json_file_path', default_value=''),
         DeclareLaunchArgument('uvc_backend', default_value='libuvc'),#libuvc or v4l2
@@ -87,12 +86,15 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_colored_point_cloud', default_value='false'),
         DeclareLaunchArgument('cloud_frame_id', default_value=''),
         DeclareLaunchArgument('connection_delay', default_value='10'),
+        DeclareLaunchArgument('color_frame_queue_max_frames', default_value='1'),
         DeclareLaunchArgument('color_width', default_value='0'),
         DeclareLaunchArgument('color_height', default_value='0'),
         DeclareLaunchArgument('color_fps', default_value='0'),
         DeclareLaunchArgument('color_format', default_value='ANY'),
         DeclareLaunchArgument('enable_color', default_value='true'),
         DeclareLaunchArgument('color_qos', default_value='default'),
+        DeclareLaunchArgument('color_qos_history', default_value='default'),
+        DeclareLaunchArgument('color_qos_depth', default_value='-1'),
         DeclareLaunchArgument('color_camera_info_qos', default_value='default'),
         DeclareLaunchArgument('enable_color_auto_exposure_priority', default_value='false'),
         DeclareLaunchArgument('enable_color_auto_exposure', default_value='true'),
@@ -115,6 +117,8 @@ def generate_launch_description():
         DeclareLaunchArgument('depth_format', default_value='ANY'),
         DeclareLaunchArgument('enable_depth', default_value='true'),
         DeclareLaunchArgument('depth_qos', default_value='default'),
+        DeclareLaunchArgument('depth_qos_history', default_value='default'),
+        DeclareLaunchArgument('depth_qos_depth', default_value='-1'),
         DeclareLaunchArgument('depth_camera_info_qos', default_value='default'),
         DeclareLaunchArgument('enable_depth_auto_exposure_priority', default_value='false'),
         DeclareLaunchArgument('depth_precision', default_value=''),
@@ -125,6 +129,8 @@ def generate_launch_description():
         DeclareLaunchArgument('left_ir_format', default_value='ANY'),
         DeclareLaunchArgument('enable_left_ir', default_value='false'),
         DeclareLaunchArgument('left_ir_qos', default_value='default'),
+        DeclareLaunchArgument('left_ir_qos_history', default_value='default'),
+        DeclareLaunchArgument('left_ir_qos_depth', default_value='-1'),
         DeclareLaunchArgument('left_ir_camera_info_qos', default_value='default'),
         DeclareLaunchArgument('right_ir_width', default_value='0'),
         DeclareLaunchArgument('right_ir_height', default_value='0'),
@@ -132,12 +138,13 @@ def generate_launch_description():
         DeclareLaunchArgument('right_ir_format', default_value='ANY'),
         DeclareLaunchArgument('enable_right_ir', default_value='false'),
         DeclareLaunchArgument('right_ir_qos', default_value='default'),
+        DeclareLaunchArgument('right_ir_qos_history', default_value='default'),
+        DeclareLaunchArgument('right_ir_qos_depth', default_value='-1'),
         DeclareLaunchArgument('right_ir_camera_info_qos', default_value='default'),
         DeclareLaunchArgument('enable_ir_auto_exposure', default_value='true'),
         DeclareLaunchArgument('ir_exposure', default_value='-1'),
         DeclareLaunchArgument('ir_gain', default_value='-1'),
         DeclareLaunchArgument('ir_ae_max_exposure', default_value='-1'),
-        DeclareLaunchArgument('ir_brightness', default_value='-1'),
         DeclareLaunchArgument('enable_sync_output_accel_gyro', default_value='false'),
         DeclareLaunchArgument('enable_accel', default_value='false'),
         DeclareLaunchArgument('enable_accel_data_correction', default_value='true'),
@@ -157,6 +164,7 @@ def generate_launch_description():
         DeclareLaunchArgument('log_file_name', default_value=''),
         DeclareLaunchArgument('enable_publish_extrinsic', default_value='false'),
         DeclareLaunchArgument('enable_d2c_viewer', default_value='false'),
+        DeclareLaunchArgument('depth_colorizer_mode', default_value='none'),
         DeclareLaunchArgument('disparity_to_depth_mode', default_value='HW'),
         DeclareLaunchArgument('enable_ldp', default_value='true'),
         DeclareLaunchArgument('ldp_power_level', default_value='-1'),
@@ -182,6 +190,9 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_disparity_to_depth', default_value='true'),
         DeclareLaunchArgument('enable_hole_filling_filter', default_value='false'),
         DeclareLaunchArgument('enable_false_positive_filter', default_value='true'),
+        DeclareLaunchArgument('enable_enhanced_depth', default_value='false'),
+        DeclareLaunchArgument('enhanced_depth_model_path', default_value=''),
+        DeclareLaunchArgument('enhanced_depth_confidence_threshold', default_value='51'),
         DeclareLaunchArgument('decimation_filter_scale', default_value='-1'),
         DeclareLaunchArgument('sequence_id_filter_id', default_value='-1'),
         DeclareLaunchArgument('threshold_filter_max', default_value='-1'),
@@ -202,6 +213,7 @@ def generate_launch_description():
         DeclareLaunchArgument('hdr_merge_gain_2', default_value='-1'),
         DeclareLaunchArgument('align_mode', default_value='HW'),
         DeclareLaunchArgument('align_target_stream', default_value='COLOR'),# COLOR or DEPTH
+        DeclareLaunchArgument('frame_aggregate_mode', default_value='ANY'), # full_frame, color_frame, ANY or disable
         DeclareLaunchArgument('diagnostic_period', default_value='1.0'),
         DeclareLaunchArgument('depth_precision', default_value=''),
         DeclareLaunchArgument('device_preset', default_value=''),
@@ -219,6 +231,7 @@ def generate_launch_description():
         DeclareLaunchArgument('config_file_path', default_value=''),
         DeclareLaunchArgument('enable_heartbeat', default_value='false'),
         DeclareLaunchArgument('enable_firmware_log', default_value='false'),
+        DeclareLaunchArgument('monitor_poll_interval_sec', default_value='-1'),
 
         #color image transport plugins
         DeclareLaunchArgument('color.image_raw.enable_pub_plugins',default_value='["image_transport/compressed", "image_transport/raw", "image_transport/theora"]'),

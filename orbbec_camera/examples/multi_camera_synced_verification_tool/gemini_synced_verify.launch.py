@@ -155,6 +155,7 @@ def generate_launch_description():
         DeclareLaunchArgument('laser_energy_level', default_value='-1'),
         DeclareLaunchArgument('enable_heartbeat', default_value='false'),
         DeclareLaunchArgument('enable_firmware_log', default_value='false'),
+        DeclareLaunchArgument('monitor_poll_interval_sec', default_value='-1'),
         DeclareLaunchArgument('time_domain', default_value='global'),
         DeclareLaunchArgument('use_intra_process_comms', default_value='false'),
         DeclareLaunchArgument('attach_component_container_enable', default_value='false'),
